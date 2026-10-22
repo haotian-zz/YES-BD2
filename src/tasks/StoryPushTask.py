@@ -351,6 +351,9 @@ class StoryPushTask(CartridgeFieldTask):
                 if screen != StoryScreen.TALK:
                     skip_presses = 0
             cutscene_again = screen == StoryScreen.CUTSCENE and last_kind == StoryScreen.CUTSCENE
+            # 「重新挑战」 takes a few seconds to leave the defeat screen: one loss
+            # until another screen showed.
+            defeat_again = screen == StoryScreen.BATTLE_DEFEAT and last_kind == StoryScreen.BATTLE_DEFEAT
             last_kind = screen
             if goal:
                 last_goal = goal
@@ -418,6 +421,8 @@ class StoryPushTask(CartridgeFieldTask):
                     self._click_reference(*point, after_sleep=1.2)  # 不用确认：推图循环下一轮重看画面
             elif screen == StoryScreen.BATTLE_AUTO:
                 self.sleep(POLL_SECONDS * 2)
+            elif screen == StoryScreen.BATTLE_DEFEAT and defeat_again:
+                self.sleep(POLL_SECONDS)
             elif screen == StoryScreen.BATTLE_DEFEAT:
                 defeats += 1
                 self.log_warning(f"{LABEL}：战斗失败（第 {defeats} 次）。")
