@@ -45,6 +45,7 @@ class StoryScreen(str, Enum):
     TALK = "talk"
     BATTLE_AUTO = "battle_auto"
     BATTLE_RESULT = "battle_result"
+    BATTLE_DEFEAT = "battle_defeat"
     BATTLE_READY = "battle_ready"
     NPC_FOCUS = "npc_focus"
     INTERACT = "interact"
@@ -98,6 +99,13 @@ TALK_ADVANCE_POINT = (960, 950)
 # 「2 重新躺下。」, the card 1 prologue); the first one is taken.
 CHOICE_ROI = (600, 820, 1320, 1060)
 CHOICE_MIN_GAP = 50
+# A lost story battle (PATH OF TRIALS, live 2026-10-22): 「DEFEAT」 over
+# 「返回 / 重新挑战 / 继续（第1次）」 bottom centre, no 「离开」.
+DEFEAT_TEXTS = ("defeat",)
+DEFEAT_RETRY_TEXTS = ("重新挑战", "重新挑戰")
+DEFEAT_BACK_TEXTS = ("返回",)
+DEFEAT_BUTTON_ROI = (600, 940, 1320, 1050)
+DEFEAT_BACK_POINT = (778, 993)
 # 「结束自动战斗」 bottom right / 「自动战斗中」 bottom left.
 RESULT_LEAVE_ROI = (1300, 900, 1920, 1080)
 BATTLE_BUTTON_TEXT = "battle"
@@ -213,6 +221,15 @@ def _find(boxes, words, roi=None):
     return None
 
 
+def defeat_back_point(boxes) -> tuple[int, int]:
+    """「返回」 on the defeat screen, which leaves the battle."""
+    back = _find(boxes, DEFEAT_BACK_TEXTS, DEFEAT_BUTTON_ROI)
+    if back is None:
+        return DEFEAT_BACK_POINT
+    x, y = _centre(back)
+    return round(x), round(y)
+
+
 def _exact(boxes, word: str, roi):
     for box in boxes or ():
         if _norm(box) == word and _inside(box, roi):
@@ -253,6 +270,11 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
             return StoryScreen.DIALOG, (round(x), round(y))
     if _find(boxes, AUTO_TEXTS):
         return StoryScreen.BATTLE_AUTO, None
+    if _find(boxes, DEFEAT_TEXTS):
+        retry = _find(boxes, DEFEAT_RETRY_TEXTS, DEFEAT_BUTTON_ROI)
+        if retry is not None:
+            x, y = _centre(retry)
+            return StoryScreen.BATTLE_DEFEAT, (round(x), round(y))
     leave = _find(boxes, LEAVE_TEXTS, RESULT_LEAVE_ROI)
     if leave is not None:
         x, y = _centre(leave)

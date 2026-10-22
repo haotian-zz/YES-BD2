@@ -87,6 +87,12 @@ class ClassifyTest(unittest.TestCase):
         )
         self.assertEqual((StoryScreen.BATTLE_RESULT, (1725, 1008)), (screen, point))
 
+    def test_defeat_retries_then_goes_back(self):
+        boxes = [_box("DEFEAT", 958, 273, 200), _box("第1次", 1150, 941), _box("返回", 778, 993),
+                 _box("重新挑战", 968, 993, 100), _box("继续", 1159, 992)]
+        self.assertEqual((StoryScreen.BATTLE_DEFEAT, (968, 993)), story_push.classify(boxes))
+        self.assertEqual((778, 993), story_push.defeat_back_point(boxes))
+
     def test_arrival_at_a_person_presses_the_interaction_button(self):
         screen, point = story_push.classify(
             FIELD_HUD + [_box("主线", 1625, 138), _box("与拉德尔对话", 1640, 165, 120),
