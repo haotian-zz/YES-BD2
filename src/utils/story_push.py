@@ -132,7 +132,10 @@ FIELD_HUD_LABELS = ("space", "tab")
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "recognition-assets" / "template-assets" / "story_push"
 TALK_SKIP_TEMPLATE = TEMPLATE_DIR / "talk_skip.png"
 TALK_SKIP_SEARCH = (1590, 15, 100, 90)
-TALK_SKIP_MIN_SCORE = 0.7
+# Matched on its white pixels: over a bright street the grey match fell to
+# 0.67 (card 16); white masks give talks >= 0.93, other screens <= 0.47
+# over 62 shots.
+TALK_SKIP_MIN_SCORE = 0.8
 INTERACT_TEMPLATE = TEMPLATE_DIR / "interact_button.png"
 INTERACT_SEARCH = (1360, 835, 100, 100)
 INTERACT_MIN_SCORE = 0.85
@@ -145,27 +148,38 @@ NPC_FOCUS_SEARCH = (1665, 780, 120, 120)
 NPC_FOCUS_MIN_SCORE = 0.85
 NPC_FOCUS_BACK_POINT = (172, 50)
 
-_templates: dict[Path, np.ndarray] = {}
+_templates: dict[tuple[Path, bool], np.ndarray] = {}
 
 
-def icon_score(frame_1080: np.ndarray, template_path: Path, search) -> float:
-    template = _templates.get(template_path)
+def _white(image: np.ndarray) -> np.ndarray:
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    return (((hsv[:, :, 2] >= 215) & (hsv[:, :, 1] <= 40)) * 255).astype(np.uint8)
+
+
+def icon_score(frame_1080: np.ndarray, template_path: Path, search, white: bool = False) -> float:
+    """Best match of the template in the search box; ``white`` matches the
+    white pixels only (an icon drawn white over any background)."""
+    template = _templates.get((template_path, white))
     if template is None:
-        template = cv2.imread(str(template_path), cv2.IMREAD_GRAYSCALE)
-        if template is None:
+        colour = cv2.imread(str(template_path))
+        if colour is None:
             return 0.0
-        _templates[template_path] = template
+        template = _white(colour) if white else cv2.cvtColor(colour, cv2.COLOR_BGR2GRAY)
+        _templates[(template_path, white)] = template
     x, y, w, h = search
     patch = frame_1080[y : y + h, x : x + w, :3]
     if patch.shape[0] < template.shape[0] or patch.shape[1] < template.shape[1]:
         return 0.0
-    grey = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
-    return float(cv2.matchTemplate(grey, template, cv2.TM_CCOEFF_NORMED).max())
+    if white:
+        result = cv2.matchTemplate(_white(patch), template, cv2.TM_CCORR_NORMED)
+    else:
+        result = cv2.matchTemplate(cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY), template, cv2.TM_CCOEFF_NORMED)
+    return float(np.nan_to_num(result).max())
 
 
 def icons(frame_1080: np.ndarray) -> dict[str, bool]:
     return {
-        "talk_skip": icon_score(frame_1080, TALK_SKIP_TEMPLATE, TALK_SKIP_SEARCH) >= TALK_SKIP_MIN_SCORE,
+        "talk_skip": icon_score(frame_1080, TALK_SKIP_TEMPLATE, TALK_SKIP_SEARCH, white=True) >= TALK_SKIP_MIN_SCORE,
         "interact": icon_score(frame_1080, INTERACT_TEMPLATE, INTERACT_SEARCH) >= INTERACT_MIN_SCORE,
         "npc_focus": icon_score(frame_1080, NPC_FOCUS_TEMPLATE, NPC_FOCUS_SEARCH) >= NPC_FOCUS_MIN_SCORE,
     }
