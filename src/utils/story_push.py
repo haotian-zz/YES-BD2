@@ -32,6 +32,7 @@ from src.utils.ocr_utils import normalize_ocr_text
 class StoryScreen(str, Enum):
     INSERT = "insert"
     SKIP_CONFIRM = "skip_confirm"
+    CHOICE = "choice"
     TALK = "talk"
     BATTLE_AUTO = "battle_auto"
     BATTLE_RESULT = "battle_result"
@@ -54,6 +55,10 @@ SKIP_CONFIRM_ROI = (900, 700, 1200, 850)
 TALK_SKIP_LABEL = "F2"
 TALK_SKIP_LABEL_ROI = (1550, 70, 1720, 130)
 TALK_SKIP_POINT = (1638, 60)
+# A talk asking for an answer: the options stacked bottom centre (「1 起床。」
+# 「2 重新躺下。」, the card 1 prologue); the first one is taken.
+CHOICE_ROI = (600, 820, 1320, 1060)
+CHOICE_MIN_GAP = 50
 # 「结束自动战斗」 bottom right / 「自动战斗中」 bottom left.
 RESULT_LEAVE_ROI = (1300, 900, 1920, 1080)
 BATTLE_BUTTON_TEXT = "battle"
@@ -135,6 +140,13 @@ def classify(boxes) -> tuple[StoryScreen, tuple[int, int] | None]:
     ):
         return StoryScreen.BATTLE_READY, AUTO_BATTLE_TOGGLE_POINT
     if _exact(boxes, normalize_ocr_text(TALK_SKIP_LABEL), TALK_SKIP_LABEL_ROI):
+        options = sorted(
+            (box for box in boxes if len(_norm(box)) >= 2 and _inside(box, CHOICE_ROI)),
+            key=lambda box: box.y,
+        )
+        if len(options) >= 2 and _centre(options[1])[1] - _centre(options[0])[1] >= CHOICE_MIN_GAP:
+            x, y = _centre(options[0])
+            return StoryScreen.CHOICE, (round(x), round(y))
         return StoryScreen.TALK, TALK_SKIP_POINT
     if _exact(boxes, INTERACT_LABEL, INTERACT_LABEL_ROI):
         return StoryScreen.INTERACT, INTERACT_POINT

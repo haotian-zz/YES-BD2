@@ -43,6 +43,13 @@ class ClassifyTest(unittest.TestCase):
         )
         self.assertEqual((StoryScreen.TALK, story_push.TALK_SKIP_POINT), (screen, point))
 
+    def test_talk_with_options_takes_the_first(self):
+        screen, point = story_push.classify(
+            [_box("F", 1520, 101, 20), _box("F2", 1639, 104, 30), _box("F3", 1761, 104, 30),
+             _box("起床。", 951, 905), _box("重新躺下。", 951, 991, 100)]
+        )
+        self.assertEqual((StoryScreen.CHOICE, (951, 905)), (screen, point))
+
     def test_skip_dialog_presses_confirm(self):
         screen, point = story_push.classify(
             [_box("跳过对话", 958, 310), _box("主线", 912, 350), _box("取消", 875, 780),

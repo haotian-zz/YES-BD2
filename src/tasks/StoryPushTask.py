@@ -38,6 +38,9 @@ ROW_DRAG_BELOW_HEADER = 150
 ROW_DRAG_LEFT_X, ROW_DRAG_RIGHT_X = 300, 1700
 ROW_DRAG_SECONDS = 0.8
 ROW_DRAGS_MAX = 6
+# Read at full size: the default whole-frame read shrinks to 720 lines and
+# lost the talk's small 「F2」 label (live 2026-10-22).
+FULL_SCREEN = (0, 0, REFERENCE_WIDTH, REFERENCE_HEIGHT)
 
 LABEL = "主线推图"
 CONTINUE_KEY = "持续推进"
@@ -136,7 +139,7 @@ class StoryPushTask(CartridgeFieldTask):
         for look in range(2):
             if look:
                 self.sleep(0.8)
-            boxes = self._reference_boxes(self.capture_frame(), None, LABEL)
+            boxes = self._reference_boxes(self.capture_frame(), FULL_SCREEN, LABEL)
             screen, _point = story_push.classify(boxes)
             if screen == StoryScreen.UNKNOWN and not self._field_hud_shown(boxes):
                 return False
@@ -233,7 +236,7 @@ class StoryPushTask(CartridgeFieldTask):
                     f"{no_progress // 60} 分钟没有推进，停在「{last_kind.value if last_kind else '未知'}」"
                     f"{f'，主线目标「{last_goal}」' if last_goal else ''}（可能是解谜关或需要手动操作）"
                 )
-            boxes = self._reference_boxes(self.capture_frame(), None, LABEL)
+            boxes = self._reference_boxes(self.capture_frame(), FULL_SCREEN, LABEL)
             screen, point = story_push.classify(boxes)
             goal = story_push.quest_goal_text(boxes)
             if screen != last_kind or (goal and goal != last_goal):
@@ -283,6 +286,7 @@ class StoryPushTask(CartridgeFieldTask):
                 self._click_reference(*point, after_sleep=2.0)  # 不用确认：推图循环下一轮重看画面
             elif screen in (
                 StoryScreen.INSERT,
+                StoryScreen.CHOICE,
                 StoryScreen.TALK,
                 StoryScreen.SKIP_CONFIRM,
                 StoryScreen.INTERACT,
