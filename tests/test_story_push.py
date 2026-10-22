@@ -110,9 +110,13 @@ class ClassifyTest(unittest.TestCase):
 
     def test_talk_found_by_its_skip_icon_when_the_labels_misread(self):
         # The game's OCR read 「F1 F2 F3」 as 「日 y 因」 (live 2026-10-22).
-        boxes = [_box("日", 1520, 101, 20), _box("y", 1640, 60, 20), _box("因", 1760, 103, 20)]
+        boxes = [_box("1)", 1281, 58, 20), _box("y", 1640, 60, 20), _box("日", 1520, 101, 20),
+                 _box("因", 1760, 103, 20), _box("1", 655, 904, 20), _box("起床。", 951, 905),
+                 _box("0", 656, 992, 20), _box("重新躺下。", 950, 990, 100)]
         self.assertEqual(StoryScreen.UNKNOWN, story_push.classify(boxes)[0])
-        self.assertEqual(StoryScreen.TALK, story_push.classify(boxes, {"talk_skip": True})[0])
+        self.assertEqual((StoryScreen.CHOICE, (951, 905)), story_push.classify(boxes, {"talk_skip": True}))
+        lone = [_box("日", 1520, 101, 20), _box("y", 1640, 60, 20), _box("因", 1760, 103, 20)]
+        self.assertEqual(StoryScreen.TALK, story_push.classify(lone, {"talk_skip": True})[0])
 
     def test_icons_are_found_in_their_corner(self):
         frame = np.zeros((1080, 1920, 3), np.uint8)
