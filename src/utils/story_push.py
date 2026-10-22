@@ -46,6 +46,7 @@ class StoryScreen(str, Enum):
     BATTLE_AUTO = "battle_auto"
     BATTLE_RESULT = "battle_result"
     BATTLE_DEFEAT = "battle_defeat"
+    RETRY_CONFIRM = "retry_confirm"
     BATTLE_READY = "battle_ready"
     NPC_FOCUS = "npc_focus"
     INTERACT = "interact"
@@ -106,6 +107,9 @@ DEFEAT_RETRY_TEXTS = ("重新挑战", "重新挑戰")
 DEFEAT_BACK_TEXTS = ("返回",)
 DEFEAT_BUTTON_ROI = (600, 940, 1320, 1050)
 DEFEAT_BACK_POINT = (778, 993)
+# 「重新挑战」 asks first: 「取消 / 从上一回合开始 / 从最初开始」 (live
+# 2026-10-22); the battle is played again from its start.
+RETRY_FROM_START_TEXTS = ("从最初开始", "從最初開始")
 # 「结束自动战斗」 bottom right / 「自动战斗中」 bottom left.
 RESULT_LEAVE_ROI = (1300, 900, 1920, 1080)
 BATTLE_BUTTON_TEXT = "battle"
@@ -270,6 +274,10 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
             return StoryScreen.DIALOG, (round(x), round(y))
     if _find(boxes, AUTO_TEXTS):
         return StoryScreen.BATTLE_AUTO, None
+    from_start = _find(boxes, RETRY_FROM_START_TEXTS)
+    if from_start is not None:
+        x, y = _centre(from_start)
+        return StoryScreen.RETRY_CONFIRM, (round(x), round(y))
     if _find(boxes, DEFEAT_TEXTS):
         retry = _find(boxes, DEFEAT_RETRY_TEXTS, DEFEAT_BUTTON_ROI)
         if retry is not None:

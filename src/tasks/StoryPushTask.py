@@ -60,6 +60,7 @@ TALK_SKIP_PRESSES = 2
 # Lost battles in one cartridge before the run stops: 重新挑战 twice, then stop
 # (the user 2026-10-22 「重新挑战几次再停」).
 DEFEATS_MAX = 3
+DEFEAT_SETTLE_SECONDS = 2.0
 DEFEAT_WORDS = ("defeat",)
 # The field HUD (SPACE / TAB under the skill wheel) with the quest row unread:
 # E after this long.
@@ -86,6 +87,7 @@ STORY_GOES_ON = (
     StoryScreen.BATTLE_AUTO,
     StoryScreen.BATTLE_RESULT,
     StoryScreen.BATTLE_DEFEAT,
+    StoryScreen.RETRY_CONFIRM,
     StoryScreen.BATTLE_READY,
     StoryScreen.WALKING,
     StoryScreen.QUEST,
@@ -351,8 +353,9 @@ class StoryPushTask(CartridgeFieldTask):
                 if screen != StoryScreen.TALK:
                     skip_presses = 0
             cutscene_again = screen == StoryScreen.CUTSCENE and last_kind == StoryScreen.CUTSCENE
-            # 「重新挑战」 takes a few seconds to leave the defeat screen: one loss
-            # until another screen showed.
+            # One loss until another screen showed: 「重新挑战」 does nothing while
+            # the defeat screen still animates in (live 2026-10-22), so it is
+            # pressed again.
             defeat_again = screen == StoryScreen.BATTLE_DEFEAT and last_kind == StoryScreen.BATTLE_DEFEAT
             last_kind = screen
             if goal:
@@ -422,7 +425,7 @@ class StoryPushTask(CartridgeFieldTask):
             elif screen == StoryScreen.BATTLE_AUTO:
                 self.sleep(POLL_SECONDS * 2)
             elif screen == StoryScreen.BATTLE_DEFEAT and defeat_again:
-                self.sleep(POLL_SECONDS)
+                self._click_reference(*point, after_sleep=3.0)  # 不用确认：下一轮重看确认框出没出来
             elif screen == StoryScreen.BATTLE_DEFEAT:
                 defeats += 1
                 self.log_warning(f"{LABEL}：战斗失败（第 {defeats} 次）。")
@@ -430,6 +433,7 @@ class StoryPushTask(CartridgeFieldTask):
                     self._click_reference(*story_push.defeat_back_point(boxes), after_sleep=2.0)  # 不用确认：停止前离开战斗
                     return f"默认编队打输了 {defeats} 次，请先加强编队"
                 self.log_info(f"{LABEL}：重新挑战。")
+                self.sleep(DEFEAT_SETTLE_SECONDS)
                 self._click_reference(*point, after_sleep=3.0)  # 不用确认：推图循环下一轮重看画面
             elif screen == StoryScreen.BATTLE_RESULT:
                 if any(word in self._boxes_text(boxes).lower() for word in DEFEAT_WORDS):
@@ -439,6 +443,9 @@ class StoryPushTask(CartridgeFieldTask):
                         self._click_reference(*point, after_sleep=2.0)  # 不用确认：停止前离开结算
                         return f"默认编队打输了 {defeats} 次，请先加强编队"
                 self._click_reference(*point, after_sleep=2.0)  # 不用确认：推图循环下一轮重看画面
+            elif screen == StoryScreen.RETRY_CONFIRM:
+                self.log_info(f"{LABEL}：重新挑战，从最初开始。")
+                self._click_reference(*point, after_sleep=3.0)  # 不用确认：推图循环下一轮重看画面
             elif screen in (
                 StoryScreen.INSERT,
                 StoryScreen.CHOICE,

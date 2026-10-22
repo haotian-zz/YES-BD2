@@ -92,6 +92,10 @@ class ClassifyTest(unittest.TestCase):
                  _box("重新挑战", 968, 993, 100), _box("继续", 1159, 992)]
         self.assertEqual((StoryScreen.BATTLE_DEFEAT, (968, 993)), story_push.classify(boxes))
         self.assertEqual((778, 993), story_push.defeat_back_point(boxes))
+        confirm = boxes + [_box("重新挑战", 960, 405, 100), _box("是否重新挑战？", 960, 532, 140),
+                           _box("取消", 770, 686), _box("从上一回合开始", 970, 686, 140),
+                           _box("从最初开始", 1169, 686, 100)]
+        self.assertEqual((StoryScreen.RETRY_CONFIRM, (1169, 686)), story_push.classify(confirm))
 
     def test_arrival_at_a_person_presses_the_interaction_button(self):
         screen, point = story_push.classify(
