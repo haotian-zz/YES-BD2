@@ -63,6 +63,10 @@ POLL_SECONDS = 1.0
 class StoryPushTask(CartridgeFieldTask):
     claim_log_name = "story_push"
     label = LABEL
+    # Started inside a story cartridge (the user: 「如果已经选择了一个剧情游戏卡
+    # 那就直接进入这个游戏卡开始推图」), a cut-scene cannot be left for 主页
+    # (Esc / H / back do nothing there, live 2026-10-22): run_claim decides.
+    start_from_home = False
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -87,7 +91,24 @@ class StoryPushTask(CartridgeFieldTask):
     def run_claim(self) -> bool:
         deadline = monotonic() + 60 * max(1, int(self.config.get(MAX_MINUTES_KEY, MAX_MINUTES)))
         cleared = 0
+        inside = self._story_screen_now()
         while True:
+            if inside:
+                inside = False
+                card = "当前的剧情游戏卡"
+                self.log_info(f"{LABEL}：已经在剧情游戏卡里，直接推图。")
+                outcome = self._push(deadline)
+                if outcome != "cleared":
+                    self._note_why(outcome)
+                    self._save_flow_diagnostic("story_push_stopped")
+                    return self._claim_fail("推图")
+                cleared += 1
+                self.log_info(f"{LABEL}：{card} 已推完（本次第 {cleared} 张）。")
+                if not bool(self.config.get(CONTINUE_KEY, True)) or monotonic() >= deadline:
+                    return self._field_to_home()
+                if not self._field_to_home():
+                    return self._claim_fail("返回主页")
+                continue
             if not self._open_page_from_home(
                 "游戏卡珍藏集", CARTRIDGE_SLOT_POINT, COLLECTION_TITLE_KEYWORDS
             ):
@@ -109,6 +130,17 @@ class StoryPushTask(CartridgeFieldTask):
                 return self._field_to_home()
             if not self._field_to_home():
                 return self._claim_fail("返回主页")
+
+    def _story_screen_now(self) -> bool:
+        """Two reads in a row show a story screen (talk, CG, battle, field)."""
+        for look in range(2):
+            if look:
+                self.sleep(0.8)
+            boxes = self._reference_boxes(self.capture_frame(), None, LABEL)
+            screen, _point = story_push.classify(boxes)
+            if screen == StoryScreen.UNKNOWN and not self._field_hud_shown(boxes):
+                return False
+        return True
 
     # -- cartridge choice ------------------------------------------------------------
 
