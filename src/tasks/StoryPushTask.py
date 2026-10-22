@@ -69,6 +69,9 @@ AFTER_CLEARED_LOOKS = 10
 UNLOCK_CLOSE_MAX = 4
 # Goal presses before the interaction button is taken (see _push).
 INTERACT_QUEST_FIRST = 1
+# A walk can stall behind a jar on a ledge, the banner still up (card 15,
+# live 2026-10-22); stopped and pressed again after this long, it went on.
+WALK_REPATH_SECONDS = 45.0
 STORY_GOES_ON = (
     StoryScreen.INSERT,
     StoryScreen.SKIP_CONFIRM,
@@ -295,6 +298,7 @@ class StoryPushTask(CartridgeFieldTask):
         progressed_at = monotonic()
         quest_presses = key_presses = toggle_presses = skip_presses = defeats = 0
         interact_detours = 0
+        walking_since = None
         field_only_since = None
         while True:
             now = monotonic()
@@ -326,6 +330,8 @@ class StoryPushTask(CartridgeFieldTask):
             self.info_set("当前阶段", f"{LABEL}：{screen.value}")
             if screen != StoryScreen.UNKNOWN:
                 field_only_since = None
+            if screen != StoryScreen.WALKING:
+                walking_since = None
 
             if screen == StoryScreen.GUIDE:
                 return "cleared"
@@ -344,7 +350,15 @@ class StoryPushTask(CartridgeFieldTask):
                     return f"按了主线任务也没有开始自动移动（主线目标「{goal or last_goal}」，可能需要手动解谜）"
             elif screen == StoryScreen.WALKING:
                 quest_presses = key_presses = interact_detours = 0
-                self.sleep(POLL_SECONDS)
+                walking_since = walking_since or now
+                goal_point = story_push.quest_point(boxes)
+                if now - walking_since >= WALK_REPATH_SECONDS and goal_point is not None:
+                    walking_since = None
+                    self.log_info(f"{LABEL}：自动移动太久，停下重新点主线目标。")
+                    self._click_reference(*story_push.WALK_CANCEL_POINT, after_sleep=1.5)  # 不用确认：接着重点主线目标
+                    self._click_reference(*goal_point, after_sleep=1.5)  # 不用确认：推图循环下一轮看是否又在移动
+                else:
+                    self.sleep(POLL_SECONDS)
             elif screen == StoryScreen.BATTLE_READY:
                 toggle_presses += 1
                 if toggle_presses <= AUTO_TOGGLE_PRESSES:

@@ -100,6 +100,8 @@ INTERACT_LABEL_ROI = (1370, 915, 1450, 965)
 INTERACT_POINT = (1410, 885)
 INTERACT_KEY = "F"
 WALKING_TEXTS = ("自动移动中", "自動移動中")
+# ✕ under the walking banner stops the walk.
+WALK_CANCEL_POINT = (960, 985)
 QUEST_TEXTS = ("主线", "主線")
 QUEST_ROI = (1500, 100, 1920, 260)
 QUEST_KEY = "E"
