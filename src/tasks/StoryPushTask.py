@@ -139,8 +139,8 @@ class StoryPushTask(CartridgeFieldTask):
         for look in range(2):
             if look:
                 self.sleep(0.8)
-            boxes = self._reference_boxes(self.capture_frame(), FULL_SCREEN, LABEL)
-            screen, _point = story_push.classify(boxes)
+            boxes, seen = self._read_screen()
+            screen, _point = story_push.classify(boxes, seen)
             if screen == StoryScreen.UNKNOWN and not self._field_hud_shown(boxes):
                 self.log_info(
                     f"{LABEL}：开始时不在剧情画面，读到 "
@@ -240,8 +240,8 @@ class StoryPushTask(CartridgeFieldTask):
                     f"{no_progress // 60} 分钟没有推进，停在「{last_kind.value if last_kind else '未知'}」"
                     f"{f'，主线目标「{last_goal}」' if last_goal else ''}（可能是解谜关或需要手动操作）"
                 )
-            boxes = self._reference_boxes(self.capture_frame(), FULL_SCREEN, LABEL)
-            screen, point = story_push.classify(boxes)
+            boxes, seen = self._read_screen()
+            screen, point = story_push.classify(boxes, seen)
             goal = story_push.quest_goal_text(boxes)
             if screen != last_kind or (goal and goal != last_goal):
                 progressed_at = now
@@ -305,6 +305,11 @@ class StoryPushTask(CartridgeFieldTask):
                         self.tap_key(story_push.QUEST_KEY, after_sleep=1.5)
                         continue
                 self.sleep(POLL_SECONDS)
+
+    def _read_screen(self):
+        frame = self.capture_frame()
+        reference = cv2.resize(frame[:, :, :3], (REFERENCE_WIDTH, REFERENCE_HEIGHT))
+        return self._reference_boxes(frame, FULL_SCREEN, LABEL), story_push.icons(reference)
 
     @staticmethod
     def _field_hud_shown(boxes) -> bool:

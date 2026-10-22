@@ -3,6 +3,9 @@
 import unittest
 from types import SimpleNamespace
 
+import cv2
+import numpy as np
+
 from src.utils import story_push
 from src.utils.story_push import StoryScreen
 
@@ -104,6 +107,20 @@ class ClassifyTest(unittest.TestCase):
             [_box("Enter or Space", 960, 718, 120), _box("未插好游戏卡。请通过多次点击开始游戏。", 960, 777, 420)]
         )
         self.assertEqual((StoryScreen.INSERT, story_push.INSERT_POINT), (screen, point))
+
+    def test_talk_found_by_its_skip_icon_when_the_labels_misread(self):
+        # The game's OCR read 「F1 F2 F3」 as 「日 y 因」 (live 2026-10-22).
+        boxes = [_box("日", 1520, 101, 20), _box("y", 1640, 60, 20), _box("因", 1760, 103, 20)]
+        self.assertEqual(StoryScreen.UNKNOWN, story_push.classify(boxes)[0])
+        self.assertEqual(StoryScreen.TALK, story_push.classify(boxes, {"talk_skip": True})[0])
+
+    def test_icons_are_found_in_their_corner(self):
+        frame = np.zeros((1080, 1920, 3), np.uint8)
+        self.assertEqual({"talk_skip": False, "interact": False}, story_push.icons(frame))
+        for path, (x, y) in ((story_push.TALK_SKIP_TEMPLATE, (1615, 35)), (story_push.INTERACT_TEMPLATE, (1383, 858))):
+            template = cv2.imread(str(path))
+            frame[y : y + template.shape[0], x : x + template.shape[1]] = template
+        self.assertEqual({"talk_skip": True, "interact": True}, story_push.icons(frame))
 
     def test_quest_goal_text(self):
         boxes = FIELD_HUD + [_box("主线", 1625, 138), _box("前往通道另一侧", 1660, 165, 140)]

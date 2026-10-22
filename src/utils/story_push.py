@@ -24,6 +24,10 @@ height), as ``ClaimPageMixin._reference_boxes`` gives them.
 from __future__ import annotations
 
 from enum import Enum
+from pathlib import Path
+
+import cv2
+import numpy as np
 
 from src.utils.field_battle import AUTO_TEXTS, LEAVE_TEXTS, TURN_PATTERN
 from src.utils.ocr_utils import normalize_ocr_text
@@ -84,6 +88,43 @@ CUTSCENE_MAX_WORDS = 1
 CUTSCENE_POINT = (960, 1000)
 
 
+# The game's OCR reads the small 「F1 F2 F3」 / 「F」 key labels as 「日 y 因」
+# (live 2026-10-22), so the talk's 跳过 icon and the interaction button are
+# matched as pictures (cut from 1080 shots: 1.0 on talks, at most 0.79
+# elsewhere; the search stays in their own corner).
+TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "recognition-assets" / "template-assets" / "story_push"
+TALK_SKIP_TEMPLATE = TEMPLATE_DIR / "talk_skip.png"
+TALK_SKIP_SEARCH = (1590, 15, 100, 90)
+TALK_SKIP_MIN_SCORE = 0.7
+INTERACT_TEMPLATE = TEMPLATE_DIR / "interact_button.png"
+INTERACT_SEARCH = (1360, 835, 100, 100)
+INTERACT_MIN_SCORE = 0.85
+
+_templates: dict[Path, np.ndarray] = {}
+
+
+def icon_score(frame_1080: np.ndarray, template_path: Path, search) -> float:
+    template = _templates.get(template_path)
+    if template is None:
+        template = cv2.imread(str(template_path), cv2.IMREAD_GRAYSCALE)
+        if template is None:
+            return 0.0
+        _templates[template_path] = template
+    x, y, w, h = search
+    patch = frame_1080[y : y + h, x : x + w, :3]
+    if patch.shape[0] < template.shape[0] or patch.shape[1] < template.shape[1]:
+        return 0.0
+    grey = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+    return float(cv2.matchTemplate(grey, template, cv2.TM_CCOEFF_NORMED).max())
+
+
+def icons(frame_1080: np.ndarray) -> dict[str, bool]:
+    return {
+        "talk_skip": icon_score(frame_1080, TALK_SKIP_TEMPLATE, TALK_SKIP_SEARCH) >= TALK_SKIP_MIN_SCORE,
+        "interact": icon_score(frame_1080, INTERACT_TEMPLATE, INTERACT_SEARCH) >= INTERACT_MIN_SCORE,
+    }
+
+
 def _norm(box) -> str:
     return normalize_ocr_text(getattr(box, "name", ""))
 
@@ -119,9 +160,12 @@ def quest_goal_point(box) -> tuple[int, int]:
     return round(x + QUEST_GOAL_OFFSET[0]), round(y + QUEST_GOAL_OFFSET[1])
 
 
-def classify(boxes) -> tuple[StoryScreen, tuple[int, int] | None]:
-    """The screen and the reference point to press for it (None: just wait)."""
+def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, tuple[int, int] | None]:
+    """The screen and the reference point to press for it (None: just wait).
+
+    ``seen``: ``icons(frame)``, the pictures matched on the same frame."""
     boxes = list(boxes or ())
+    seen = seen or {}
     if _find(boxes, INSERT_TEXTS):
         return StoryScreen.INSERT, INSERT_POINT
     if _find(boxes, SKIP_TITLES):
@@ -139,7 +183,7 @@ def classify(boxes) -> tuple[StoryScreen, tuple[int, int] | None]:
         TURN_PATTERN.search(_norm(box)) for box in boxes
     ):
         return StoryScreen.BATTLE_READY, AUTO_BATTLE_TOGGLE_POINT
-    if _exact(boxes, normalize_ocr_text(TALK_SKIP_LABEL), TALK_SKIP_LABEL_ROI):
+    if seen.get("talk_skip") or _exact(boxes, normalize_ocr_text(TALK_SKIP_LABEL), TALK_SKIP_LABEL_ROI):
         options = sorted(
             (box for box in boxes if len(_norm(box)) >= 2 and _inside(box, CHOICE_ROI)),
             key=lambda box: box.y,
@@ -148,7 +192,7 @@ def classify(boxes) -> tuple[StoryScreen, tuple[int, int] | None]:
             x, y = _centre(options[0])
             return StoryScreen.CHOICE, (round(x), round(y))
         return StoryScreen.TALK, TALK_SKIP_POINT
-    if _exact(boxes, INTERACT_LABEL, INTERACT_LABEL_ROI):
+    if seen.get("interact") or _exact(boxes, INTERACT_LABEL, INTERACT_LABEL_ROI):
         return StoryScreen.INTERACT, INTERACT_POINT
     if _find(boxes, WALKING_TEXTS):
         return StoryScreen.WALKING, None
