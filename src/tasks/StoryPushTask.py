@@ -206,6 +206,8 @@ class StoryPushTask(CartridgeFieldTask):
             goal = story_push.quest_goal_text(boxes)
             if screen != last_kind or (goal and goal != last_goal):
                 progressed_at = now
+                if screen != last_kind:
+                    self.log_info(f"{LABEL}：画面 {screen.value}")
                 if goal and goal != last_goal:
                     self.log_info(f"{LABEL}：主线目标「{goal}」。")
                     quest_presses = key_presses = 0
