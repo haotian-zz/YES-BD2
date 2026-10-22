@@ -67,6 +67,8 @@ POLL_SECONDS = 1.0
 # within this many looks (about 2 s each).
 AFTER_CLEARED_LOOKS = 10
 UNLOCK_CLOSE_MAX = 4
+# Returns to 主页 in mid-push before the run stops.
+HOME_RETURNS_MAX = 2
 # F presses when the goal row starts no walk (the goal is right here).
 INTERACT_KEY_PRESSES = 2
 # Goal presses before the interaction button is taken (see _push).
@@ -118,7 +120,7 @@ class StoryPushTask(CartridgeFieldTask):
 
     def run_claim(self) -> bool:
         deadline = monotonic() + 60 * max(1, int(self.config.get(MAX_MINUTES_KEY, MAX_MINUTES)))
-        cleared = 0
+        cleared = home_returns = 0
         inside = self._story_screen_now()
         while True:
             if inside:
@@ -139,6 +141,10 @@ class StoryPushTask(CartridgeFieldTask):
                     self.log_info(f"{LABEL}：剧情游戏卡都已推完。")
                     return self._back_home_from_collection()
             outcome = self._push(deadline)
+            if outcome == "home" and home_returns < HOME_RETURNS_MAX:
+                home_returns += 1
+                self.log_info(f"{LABEL}：推图中回到了主页，重新选卡。")
+                continue
             if outcome != "cleared":
                 self._note_why(outcome)
                 self._save_flow_diagnostic("story_push_stopped")
@@ -205,7 +211,7 @@ class StoryPushTask(CartridgeFieldTask):
                 self.sleep(0.8)
             boxes, seen = self._read_screen()
             screen, _point = story_push.classify(boxes, seen)
-            if screen == StoryScreen.UNKNOWN and not self._field_hud_shown(boxes):
+            if screen == StoryScreen.HOME or (screen == StoryScreen.UNKNOWN and not self._field_hud_shown(boxes)):
                 self.log_info(
                     f"{LABEL}：开始时不在剧情画面，读到 "
                     + " | ".join(f"{box.name}@{box.x + box.width / 2:.0f},{box.y + box.height / 2:.0f}" for box in boxes)
@@ -331,6 +337,7 @@ class StoryPushTask(CartridgeFieldTask):
                     toggle_presses = 0
                 if screen != StoryScreen.TALK:
                     skip_presses = 0
+            cutscene_again = screen == StoryScreen.CUTSCENE and last_kind == StoryScreen.CUTSCENE
             last_kind = screen
             if goal:
                 last_goal = goal
@@ -340,6 +347,8 @@ class StoryPushTask(CartridgeFieldTask):
             if screen != StoryScreen.WALKING:
                 walking_since = None
 
+            if screen == StoryScreen.HOME:
+                return "home"
             if screen == StoryScreen.GUIDE:
                 return "cleared"
             elif screen == StoryScreen.CLEARED:
@@ -410,9 +419,12 @@ class StoryPushTask(CartridgeFieldTask):
                 StoryScreen.SKIP_CONFIRM,
                 StoryScreen.DIALOG,
                 StoryScreen.NPC_FOCUS,
-                StoryScreen.CUTSCENE,
-            ):
+            ) or cutscene_again:
                 self._click_reference(*point, after_sleep=1.2)  # 不用确认：推图循环下一轮重看画面
+            elif screen == StoryScreen.CUTSCENE:
+                # A fade can read like a CG for one frame (主页 behind it):
+                # clicked only on the second read in a row.
+                self.sleep(POLL_SECONDS / 2)
             else:
                 if self._field_hud_shown(boxes):
                     field_only_since = field_only_since or now

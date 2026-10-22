@@ -147,6 +147,11 @@ class ClassifyTest(unittest.TestCase):
         self.assertTrue(story_push.unlock_notice(boxes))
         self.assertFalse(story_push.unlock_notice(FIELD_HUD))
 
+    def test_home_is_never_a_cg(self):
+        boxes = [_box("抽抽乐", 160, 1020), _box("角色", 266, 1020), _box("付费商店", 1117, 1020, 100)]
+        self.assertEqual((StoryScreen.HOME, None), story_push.classify(boxes))
+        self.assertEqual((StoryScreen.HOME, None), story_push.classify(boxes[:1]))
+
     def test_first_entry_insert_screen_clicks_the_ring(self):
         screen, point = story_push.classify(
             [_box("Enter or Space", 960, 718, 120), _box("未插好游戏卡。请通过多次点击开始游戏。", 960, 777, 420)]

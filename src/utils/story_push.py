@@ -35,6 +35,7 @@ from src.utils.ocr_utils import normalize_ocr_text
 
 
 class StoryScreen(str, Enum):
+    HOME = "home"
     CLEARED = "cleared"
     GUIDE = "guide"
     INSERT = "insert"
@@ -53,6 +54,11 @@ class StoryScreen(str, Enum):
     UNKNOWN = "unknown"
 
 
+# 主页's bottom bar.  Never clicked on: its background art opens that
+# skin's shop page when pressed (a CG click at (960, 700) on 主页 did,
+# live 2026-10-22).
+HOME_TEXTS = ("抽抽乐", "付费商店", "付費商店")
+HOME_BAR_ROI = (0, 950, 1300, 1080)
 # The cartridge's difficulty played through: 「完成主线任务普通 / 已完成普通难度的
 # 所有探索。」 over a character art and the rewards, until a click (card 1,
 # live 2026-10-22).
@@ -206,6 +212,8 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
     ``seen``: ``icons(frame)``, the pictures matched on the same frame."""
     boxes = list(boxes or ())
     seen = seen or {}
+    if _find(boxes, HOME_TEXTS, HOME_BAR_ROI):
+        return StoryScreen.HOME, None
     if _find(boxes, CLEARED_TEXTS):
         return StoryScreen.CLEARED, CLEARED_POINT
     guide = _find(boxes, GUIDE_TEXTS)
