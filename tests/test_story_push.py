@@ -87,6 +87,20 @@ class ClassifyTest(unittest.TestCase):
         )
         self.assertEqual((StoryScreen.INTERACT, story_push.INTERACT_POINT), (screen, point))
 
+    def test_walking_past_a_person_does_not_talk_to_them(self):
+        boxes = FIELD_HUD + [_box("主线", 1625, 138), _box("自动移动中：主线任务", 960, 912, 220)]
+        self.assertEqual(StoryScreen.WALKING, story_push.classify(boxes, {"interact": True})[0])
+
+    def test_npc_focus_goes_back(self):
+        boxes = [_box("科库托斯工学家", 963, 286, 140), _box("创造性产物·", 937, 320, 120), _box("F1", 1724, 908, 30)]
+        self.assertEqual(
+            (StoryScreen.NPC_FOCUS, story_push.NPC_FOCUS_BACK_POINT), story_push.classify(boxes, {"npc_focus": True})
+        )
+
+    def test_quest_point(self):
+        self.assertEqual((1655, 163), story_push.quest_point(FIELD_HUD + [_box("主线", 1625, 138)]))
+        self.assertIsNone(story_push.quest_point(FIELD_HUD))
+
     def test_cg_without_text_or_with_a_subtitle_is_clicked_on(self):
         self.assertEqual(StoryScreen.CUTSCENE, story_push.classify([])[0])
         self.assertEqual(StoryScreen.CUTSCENE, story_push.classify([_box("`", 300, 300, 10)])[0])
@@ -151,11 +165,15 @@ class ClassifyTest(unittest.TestCase):
 
     def test_icons_are_found_in_their_corner(self):
         frame = np.zeros((1080, 1920, 3), np.uint8)
-        self.assertEqual({"talk_skip": False, "interact": False}, story_push.icons(frame))
-        for path, (x, y) in ((story_push.TALK_SKIP_TEMPLATE, (1615, 35)), (story_push.INTERACT_TEMPLATE, (1383, 858))):
+        self.assertEqual({"talk_skip": False, "interact": False, "npc_focus": False}, story_push.icons(frame))
+        for path, (x, y) in (
+            (story_push.TALK_SKIP_TEMPLATE, (1615, 35)),
+            (story_push.INTERACT_TEMPLATE, (1383, 858)),
+            (story_push.NPC_FOCUS_TEMPLATE, (1697, 812)),
+        ):
             template = cv2.imread(str(path))
             frame[y : y + template.shape[0], x : x + template.shape[1]] = template
-        self.assertEqual({"talk_skip": True, "interact": True}, story_push.icons(frame))
+        self.assertEqual({"talk_skip": True, "interact": True, "npc_focus": True}, story_push.icons(frame))
 
     def test_quest_goal_text(self):
         boxes = FIELD_HUD + [_box("主线", 1625, 138), _box("前往通道另一侧", 1660, 165, 140)]

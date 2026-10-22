@@ -45,6 +45,7 @@ class StoryScreen(str, Enum):
     BATTLE_AUTO = "battle_auto"
     BATTLE_RESULT = "battle_result"
     BATTLE_READY = "battle_ready"
+    NPC_FOCUS = "npc_focus"
     INTERACT = "interact"
     WALKING = "walking"
     QUEST = "quest"
@@ -127,6 +128,14 @@ TALK_SKIP_MIN_SCORE = 0.7
 INTERACT_TEMPLATE = TEMPLATE_DIR / "interact_button.png"
 INTERACT_SEARCH = (1360, 835, 100, 100)
 INTERACT_MIN_SCORE = 0.85
+# The interaction button pressed beside a person not on the quest (科库托斯
+# 工学家, card 15) zooms in on them: a talk button right (F1) and a back
+# arrow top left, no HUD.  The back arrow leaves (live 2026-10-22; 1.0
+# there, at most 0.56 on 49 other shots).
+NPC_FOCUS_TEMPLATE = TEMPLATE_DIR / "npc_focus_talk.png"
+NPC_FOCUS_SEARCH = (1665, 780, 120, 120)
+NPC_FOCUS_MIN_SCORE = 0.85
+NPC_FOCUS_BACK_POINT = (172, 50)
 
 _templates: dict[Path, np.ndarray] = {}
 
@@ -150,6 +159,7 @@ def icons(frame_1080: np.ndarray) -> dict[str, bool]:
     return {
         "talk_skip": icon_score(frame_1080, TALK_SKIP_TEMPLATE, TALK_SKIP_SEARCH) >= TALK_SKIP_MIN_SCORE,
         "interact": icon_score(frame_1080, INTERACT_TEMPLATE, INTERACT_SEARCH) >= INTERACT_MIN_SCORE,
+        "npc_focus": icon_score(frame_1080, NPC_FOCUS_TEMPLATE, NPC_FOCUS_SEARCH) >= NPC_FOCUS_MIN_SCORE,
     }
 
 
@@ -222,6 +232,8 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
         TURN_PATTERN.search(_norm(box)) for box in boxes
     ):
         return StoryScreen.BATTLE_READY, AUTO_BATTLE_TOGGLE_POINT
+    if seen.get("npc_focus"):
+        return StoryScreen.NPC_FOCUS, NPC_FOCUS_BACK_POINT
     if seen.get("talk_skip") or _exact(boxes, normalize_ocr_text(TALK_SKIP_LABEL), TALK_SKIP_LABEL_ROI):
         options = sorted(
             (box for box in boxes if len(_norm(box)) >= 2 and _inside(box, CHOICE_ROI)),
@@ -231,10 +243,11 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
             x, y = _centre(options[0])
             return StoryScreen.CHOICE, (round(x), round(y))
         return StoryScreen.TALK, TALK_SKIP_POINT
-    if seen.get("interact") or _exact(boxes, INTERACT_LABEL, INTERACT_LABEL_ROI):
-        return StoryScreen.INTERACT, INTERACT_POINT
+    # Walking goes past people with their interaction button showing.
     if _find(boxes, WALKING_TEXTS):
         return StoryScreen.WALKING, None
+    if seen.get("interact") or _exact(boxes, INTERACT_LABEL, INTERACT_LABEL_ROI):
+        return StoryScreen.INTERACT, INTERACT_POINT
     quest = _find(boxes, QUEST_TEXTS, QUEST_ROI)
     if quest is not None:
         return StoryScreen.QUEST, quest_goal_point(quest)
@@ -278,3 +291,9 @@ def same_goal(first: str, second: str) -> bool:
 
 def unlock_notice(boxes) -> bool:
     return _find(boxes, UNLOCK_TEXTS) is not None
+
+
+def quest_point(boxes) -> tuple[int, int] | None:
+    """The quest row's goal line to press, None when the row is unread."""
+    quest = _find(boxes, QUEST_TEXTS, QUEST_ROI)
+    return None if quest is None else quest_goal_point(quest)

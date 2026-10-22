@@ -67,6 +67,8 @@ POLL_SECONDS = 1.0
 # within this many looks (about 2 s each).
 AFTER_CLEARED_LOOKS = 10
 UNLOCK_CLOSE_MAX = 4
+# Goal presses before the interaction button is taken (see _push).
+INTERACT_QUEST_FIRST = 1
 STORY_GOES_ON = (
     StoryScreen.INSERT,
     StoryScreen.SKIP_CONFIRM,
@@ -292,6 +294,7 @@ class StoryPushTask(CartridgeFieldTask):
         last_kind, last_goal = None, ""
         progressed_at = monotonic()
         quest_presses = key_presses = toggle_presses = skip_presses = defeats = 0
+        interact_detours = 0
         field_only_since = None
         while True:
             now = monotonic()
@@ -312,7 +315,7 @@ class StoryPushTask(CartridgeFieldTask):
                     self.log_info(f"{LABEL}：画面 {screen.value}")
                 if new_goal:
                     self.log_info(f"{LABEL}：主线目标「{goal}」。")
-                    quest_presses = key_presses = 0
+                    quest_presses = key_presses = interact_detours = 0
                 if screen != StoryScreen.BATTLE_READY:
                     toggle_presses = 0
                 if screen != StoryScreen.TALK:
@@ -340,7 +343,7 @@ class StoryPushTask(CartridgeFieldTask):
                 else:
                     return f"按了主线任务也没有开始自动移动（主线目标「{goal or last_goal}」，可能需要手动解谜）"
             elif screen == StoryScreen.WALKING:
-                quest_presses = key_presses = 0
+                quest_presses = key_presses = interact_detours = 0
                 self.sleep(POLL_SECONDS)
             elif screen == StoryScreen.BATTLE_READY:
                 toggle_presses += 1
@@ -355,6 +358,16 @@ class StoryPushTask(CartridgeFieldTask):
                     self._click_reference(*point, after_sleep=1.2)  # 不用确认：推图循环下一轮看「跳过对话」
                 else:
                     self._click_reference(*story_push.TALK_ADVANCE_POINT, after_sleep=1.2)  # 不用确认：跳过无效的对话点台词往下走
+            elif screen == StoryScreen.INTERACT:
+                # The button shows beside anyone near; with the quest row up the
+                # goal is pressed once first: walking off means this person was
+                # not the goal (live 2026-10-22, card 15).
+                goal_point = story_push.quest_point(boxes)
+                if goal_point is not None and interact_detours < INTERACT_QUEST_FIRST:
+                    interact_detours += 1
+                    self._click_reference(*goal_point, after_sleep=2.0)  # 不用确认：下一轮看是走开还是停在这里
+                else:
+                    self._click_reference(*point, after_sleep=1.2)  # 不用确认：推图循环下一轮重看画面
             elif screen == StoryScreen.BATTLE_AUTO:
                 self.sleep(POLL_SECONDS * 2)
             elif screen == StoryScreen.BATTLE_RESULT:
@@ -370,7 +383,7 @@ class StoryPushTask(CartridgeFieldTask):
                 StoryScreen.CHOICE,
                 StoryScreen.SKIP_CONFIRM,
                 StoryScreen.DIALOG,
-                StoryScreen.INTERACT,
+                StoryScreen.NPC_FOCUS,
                 StoryScreen.CUTSCENE,
             ):
                 self._click_reference(*point, after_sleep=1.2)  # 不用确认：推图循环下一轮重看画面
