@@ -40,5 +40,44 @@ class UnconfirmedSkipTest(unittest.TestCase):
         self.assertFalse(result.success)
 
 
+
+class EmptySkillBarStopTest(unittest.TestCase):
+    """bd2 session 2026-10-22: no group held a collection skill, and every
+    card was skipped and run again; two such cards now end the run."""
+
+    def _fail(self, collector, card):
+        collector._skill_bar_lacked_skills = True
+        return collector._skip_after_skill_failure(
+            card, "主城区探查", SkillExecutionResult(False, message="未确认采集技能栏"), 0
+        )
+
+    def test_two_cards_without_any_collection_skill_stop_the_run(self):
+        collector = _collector()
+        warnings = []
+        collector.task = SimpleNamespace(log_warning=lambda message, **_k: warnings.append(message))
+        collector._cards_lacking_skills = set()
+
+        self.assertIsNone(self._fail(collector, CARD))
+        self.assertIsNone(self._fail(collector, CARD))  # the same card run again
+        result = self._fail(collector, SimpleNamespace(card_id="Q_cp2", label="角色卡2"))
+
+        self.assertIsInstance(result, CollectionResult)
+        self.assertFalse(result.success)
+        self.assertIn("技能栏里没装采集技能", result.message)
+        self.assertTrue(any("技能栏里没装采集技能" in message for message in warnings))
+
+    def test_a_bar_that_shows_some_skill_never_stops_the_run(self):
+        collector = _collector()
+        collector._cards_lacking_skills = set()
+        for card_id in ("Q_cp1", "Q_cp2", "Q_cp3"):
+            result = collector._skip_after_skill_failure(
+                SimpleNamespace(card_id=card_id, label=card_id),
+                "主城区探查",
+                SkillExecutionResult(False, message="未确认采集技能栏"),
+                0,
+            )
+            self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()

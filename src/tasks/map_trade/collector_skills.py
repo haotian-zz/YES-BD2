@@ -126,6 +126,10 @@ def relative_roi_center(
     return round((left + right) / 2 * width), round((top + bottom) / 2 * height)
 
 class SkillExecutionMixin:
+    # Set when every skill group was tried and none showed a collection
+    # skill at all: the skill bar holds none (bd2 session account, 2026-10-22).
+    _skill_bar_lacked_skills = False
+
     @staticmethod
     def _action_detection_is_stable(
         previous: ActionIconDetection,
@@ -394,6 +398,9 @@ class SkillExecutionMixin:
             for icon, value in zip(expected_icons, detections, strict=True)
         )
         self.task.log_warning(f"地图采集：三个技能组都没有找到采集技能：{states}。")
+        self._skill_bar_lacked_skills = all(
+            value.state is ActionIconState.ABSENT for value in detections
+        )
         return False
 
     def _counts_prove_menu(self, expected_icons: tuple[ActionIconSpec, ...]) -> bool:

@@ -69,6 +69,11 @@ def chapter_filter(text) -> set[int | str] | None:
     return wanted or None
 
 
+# Cards on which no skill group showed any collection skill before the run
+# stops: one could be a misread bar, two mean the bar holds none.
+SKILL_BAR_EMPTY_STOP_CARDS = 2
+
+
 class Collector(SkillExecutionMixin):
     def __init__(
         self,
@@ -108,6 +113,7 @@ class Collector(SkillExecutionMixin):
         # 2026-10-12: skip the card, but the report must say where).
         self._skill_skips: dict[str, str] = {}
         self._unconfirmed_cards: set[str] = set()
+        self._cards_lacking_skills: set[str] = set()
         # card_id -> why a card was skipped (player report 2026-10-17: the
         # summary said only 「这次跳过」 and the stage left over from before).
         self._skip_reasons: dict[str, str] = {}
@@ -699,6 +705,8 @@ class Collector(SkillExecutionMixin):
         """Leo 2026-10-12: a skill that cannot be confirmed on one map skips
         that card and the run goes on; the report names the card, the map and
         why.  Used-up skills still end the day's run.  None = go on."""
+        lacking = self._skill_bar_lacked_skills
+        self._skill_bar_lacked_skills = False
         if result.depleted:
             return self._skill_failure(card.card_id, stage, result, completed_this_run)
         self._record_skill_failure(card.card_id, stage, result)
@@ -706,7 +714,22 @@ class Collector(SkillExecutionMixin):
         self._skill_skips.setdefault(card.card_id, problem)
         if self._press_probably_taken(result):
             self._unconfirmed_cards.add(card.card_id)
-        return self._skip_card(card, problem, completed_this_run)
+        skipped = self._skip_card(card, problem, completed_this_run)
+        if not lacking:
+            return skipped
+        # No group holds a collection skill on two cards: every later card
+        # fails the same way (bd2 session 2026-10-22 skipped card after card,
+        # each run twice).  Stop the run and say what the player must set.
+        lacking_cards = set(getattr(self, "_cards_lacking_skills", ())) | {card.card_id}
+        self._cards_lacking_skills = lacking_cards
+        if skipped is not None or len(lacking_cards) < SKILL_BAR_EMPTY_STOP_CARDS:
+            return skipped
+        message = (
+            f"{len(lacking_cards)}张卡带上三个技能组都没有采集技能（探查、吸收、召集、压制），"
+            "技能栏里没装采集技能。请先在游戏里把采集技能装进技能组，停止本次跑图"
+        )
+        self.task.log_warning(f"地图采集：{message}。", notify=True)
+        return CollectionResult(False, completed_submaps=completed_this_run, message=message)
 
     def _leave_battle(self, card, role) -> str:
         """A field battle on screen after a press: see BaseBD2Task.leave_field_battle."""
