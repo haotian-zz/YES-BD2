@@ -222,7 +222,7 @@ class BuyFlowMixin:
             "一键购买全部收藏买不到东西。请先在游戏商店里给要买的商品点星收藏，本次跳过购买。"
         )
         self.task.log_warning(f"买：{message}", notify=True)
-        return PhaseDeferred(f"买：{message}")
+        return PhaseDeferred(message)
 
     def _no_favorites_toast_shown(self, frame) -> bool:
         text = normalize_text(self.vision.simplify(self.vision.ocr_text(
