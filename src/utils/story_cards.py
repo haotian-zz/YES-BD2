@@ -26,6 +26,7 @@ import cv2
 import numpy as np
 
 from src.utils.image_utils import template_match_response
+from src.utils.ocr_utils import normalize_ocr_text
 
 PLUS_TEMPLATE = (
     Path(__file__).resolve().parents[2]
@@ -124,3 +125,16 @@ def row_cards(frame_1080: np.ndarray, header_y: float, template: np.ndarray | No
 
 def first_unfinished(cards: list[StoryCard]) -> StoryCard | None:
     return next((card for card in cards if not card.finished), None)
+
+
+def row_header(boxes, titles):
+    """The row's header box: its text starts with the title (「剧情游戏卡 16／20」).
+
+    The 店长 row's subtitle 「「棕色尘埃2」主线剧情游戏卡」 also holds
+    「剧情游戏卡」 (live 2026-10-22), so a mere substring is not enough."""
+    wanted = [normalize_ocr_text(title) for title in titles]
+    for box in boxes or ():
+        text = normalize_ocr_text(getattr(box, "name", ""))
+        if any(text.startswith(title) for title in wanted):
+            return box
+    return None

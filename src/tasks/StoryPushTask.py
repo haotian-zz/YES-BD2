@@ -245,7 +245,7 @@ class StoryPushTask(CartridgeFieldTask):
 
     def _row_header_y(self, titles) -> float | None:
         boxes = self._reference_boxes(self.capture_frame(), None, "珍藏集行标题")
-        box = self._box_with(boxes, titles)
+        box = story_cards.row_header(boxes, titles)
         return None if box is None else box.y + box.height / 2
 
     def _reference_frame(self):
