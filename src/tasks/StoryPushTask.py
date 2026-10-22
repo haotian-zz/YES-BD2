@@ -102,35 +102,24 @@ class StoryPushTask(CartridgeFieldTask):
                 inside = False
                 card = "当前的剧情游戏卡"
                 self.log_info(f"{LABEL}：已经在剧情游戏卡里，直接推图。")
-                outcome = self._push(deadline)
-                if outcome != "cleared":
-                    self._note_why(outcome)
-                    self._save_flow_diagnostic("story_push_stopped")
-                    return self._claim_fail("推图")
-                cleared += 1
-                self.log_info(f"{LABEL}：{card} 已推完（本次第 {cleared} 张）。")
-                if not bool(self.config.get(CONTINUE_KEY, True)) or monotonic() >= deadline:
-                    return self._field_to_home()
-                if not self._field_to_home():
-                    return self._claim_fail("返回主页")
-                continue
-            if not self._open_page_from_home(
-                "游戏卡珍藏集", CARTRIDGE_SLOT_POINT, COLLECTION_TITLE_KEYWORDS
-            ):
-                return self._claim_fail("打开游戏卡珍藏集")
-            card = self._enter_unfinished_story_card()
-            if card is None:
-                return self._claim_fail("进入剧情游戏卡")
-            if card == "none":
-                self.log_info(f"{LABEL}：剧情游戏卡都已推完。")
-                return self._back_home_from_collection()
+            else:
+                if not self._open_page_from_home(
+                    "游戏卡珍藏集", CARTRIDGE_SLOT_POINT, COLLECTION_TITLE_KEYWORDS
+                ):
+                    return self._claim_fail("打开游戏卡珍藏集")
+                card = self._enter_unfinished_story_card()
+                if card is None:
+                    return self._claim_fail("进入剧情游戏卡")
+                if card == "none":
+                    self.log_info(f"{LABEL}：剧情游戏卡都已推完。")
+                    return self._back_home_from_collection()
             outcome = self._push(deadline)
             if outcome != "cleared":
                 self._note_why(outcome)
                 self._save_flow_diagnostic("story_push_stopped")
                 return self._claim_fail("推图")
             cleared += 1
-            self.log_info(f"{LABEL}：{card} 已推完（本次第 {cleared} 张）。")
+            self.log_info(f"{LABEL}：{card}已推完（本次第 {cleared} 张）。")
             if not bool(self.config.get(CONTINUE_KEY, True)) or monotonic() >= deadline:
                 return self._field_to_home()
             if not self._field_to_home():
@@ -264,7 +253,11 @@ class StoryPushTask(CartridgeFieldTask):
             if screen != StoryScreen.UNKNOWN:
                 field_only_since = None
 
-            if screen == StoryScreen.QUEST:
+            if screen == StoryScreen.CLEARED:
+                self.log_info(f"{LABEL}：普通难度推完了。")
+                self._click_reference(*point, after_sleep=2.0)  # 不用确认：关掉完成画面后由回主页流程接手
+                return "cleared"
+            elif screen == StoryScreen.QUEST:
                 if quest_presses < QUEST_PRESSES_BEFORE_KEY:
                     quest_presses += 1
                     self._click_reference(*point, after_sleep=1.5)  # 不用确认：推图循环下一轮重看画面

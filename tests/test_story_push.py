@@ -112,6 +112,13 @@ class ClassifyTest(unittest.TestCase):
         screen, _point = story_push.classify([_box("NOW", 1700, 1020), _box("LOADING", 1790, 1020)])
         self.assertEqual(StoryScreen.UNKNOWN, screen)
 
+    def test_difficulty_played_through(self):
+        screen, point = story_push.classify(
+            [_box("完成主线任务普通", 1280, 392, 240), _box("已完成普通难度的所有探索。", 1270, 426, 260),
+             _box("10,000", 1257, 632), _box("100", 1386, 632)]
+        )
+        self.assertEqual((StoryScreen.CLEARED, story_push.CLEARED_POINT), (screen, point))
+
     def test_first_entry_insert_screen_clicks_the_ring(self):
         screen, point = story_push.classify(
             [_box("Enter or Space", 960, 718, 120), _box("未插好游戏卡。请通过多次点击开始游戏。", 960, 777, 420)]

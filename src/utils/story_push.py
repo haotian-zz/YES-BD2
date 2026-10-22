@@ -35,6 +35,7 @@ from src.utils.ocr_utils import normalize_ocr_text
 
 
 class StoryScreen(str, Enum):
+    CLEARED = "cleared"
     INSERT = "insert"
     SKIP_CONFIRM = "skip_confirm"
     DIALOG = "dialog"
@@ -50,6 +51,11 @@ class StoryScreen(str, Enum):
     UNKNOWN = "unknown"
 
 
+# The cartridge's difficulty played through: 「完成主线任务普通 / 已完成普通难度的
+# 所有探索。」 over a character art and the rewards, until a click (card 1,
+# live 2026-10-22).
+CLEARED_TEXTS = ("完成主线任务", "已完成普通难度", "已完成普通難度")
+CLEARED_POINT = (960, 900)
 # A cartridge entered for the first time: 「未插好游戏卡。请通过多次点击开始游戏。」
 # under the card, a ring to click (Enter or Space) over it (SOUL-WAGER, 2026-10-22).
 INSERT_TEXTS = ("未插好游戏卡", "未插好遊戲卡")
@@ -180,6 +186,8 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
     ``seen``: ``icons(frame)``, the pictures matched on the same frame."""
     boxes = list(boxes or ())
     seen = seen or {}
+    if _find(boxes, CLEARED_TEXTS):
+        return StoryScreen.CLEARED, CLEARED_POINT
     if _find(boxes, INSERT_TEXTS):
         return StoryScreen.INSERT, INSERT_POINT
     if _find(boxes, SKIP_TITLES):
