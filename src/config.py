@@ -209,6 +209,7 @@ config = {
         ["src.tasks.WeeklyTasks", "HomePopularityTask"],
         ["src.tasks.CraftGearTask", "CraftGearTask"],
         ["src.tasks.DoomBookTask", "DoomBookTask"],
+        ["src.tasks.StoryPushTask", "StoryPushTask"],
         ["src.tasks.AffinityTalkTask", "AffinityTalkTask"],
         ["src.tasks.recovery", "ReturnHomeTask"],
         ["src.tasks.recovery", "FieldBattleEscapeTestTask"],

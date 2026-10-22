@@ -1,0 +1,167 @@
+"""主线推图: what the screen asks for while a story cartridge plays itself.
+
+Flow from the user (2026-10-22): in a story cartridge, press the top-right
+main-quest row (主线, or its E key) and the party walks by itself
+(「自动移动中：主线任务」) to the next point; talks are skipped, battles run
+with the default formation on the game's own auto battle, and the quest row
+is pressed again.  Screens met live on the bd2 session the same day
+(剧情卡 15 PROMISE OF VENGEANCE, 普通):
+
+- talk: speech bubbles with F1 记录 / F2 跳过 / F3 自动 top right; 跳过 opens
+  「跳过对话 / 是否结束剧情观看？」 with 取消 / 确认;
+- full-screen CG: no buttons, at most a subtitle (speaker + line) bottom
+  centre over a ⬇ mark; a click anywhere goes on;
+- arrival at a person: 「F 对话」 over them and an extra round button with an
+  「F」 label left of the skill wheel;
+- battle: 「TURN.1」 top, 「TURN.1 BATTLE」 bottom right, the auto-battle
+  toggle (▶ in a ring) top right; once on: 「自动战斗中」 bottom left and
+  「结束自动战斗 ESC」 bottom right; the result ends on 「离开」 bottom right.
+
+Every box here is in 1920x1080 reference coordinates (name, x, y, width,
+height), as ``ClaimPageMixin._reference_boxes`` gives them.
+"""
+
+from __future__ import annotations
+
+from enum import Enum
+
+from src.utils.field_battle import AUTO_TEXTS, LEAVE_TEXTS, TURN_PATTERN
+from src.utils.ocr_utils import normalize_ocr_text
+
+
+class StoryScreen(str, Enum):
+    INSERT = "insert"
+    SKIP_CONFIRM = "skip_confirm"
+    TALK = "talk"
+    BATTLE_AUTO = "battle_auto"
+    BATTLE_RESULT = "battle_result"
+    BATTLE_READY = "battle_ready"
+    INTERACT = "interact"
+    WALKING = "walking"
+    QUEST = "quest"
+    CUTSCENE = "cutscene"
+    UNKNOWN = "unknown"
+
+
+# A cartridge entered for the first time: 「未插好游戏卡。请通过多次点击开始游戏。」
+# under the card, a ring to click (Enter or Space) over it (SOUL-WAGER, 2026-10-22).
+INSERT_TEXTS = ("未插好游戏卡", "未插好遊戲卡")
+INSERT_POINT = (960, 654)
+SKIP_TITLES = ("跳过对话", "跳過對話")
+CONFIRM_TEXTS = ("确认", "確認")
+SKIP_CONFIRM_ROI = (900, 700, 1200, 850)
+# F2 label under the talk's 跳过 icon; the icon itself is pressed.
+TALK_SKIP_LABEL = "F2"
+TALK_SKIP_LABEL_ROI = (1550, 70, 1720, 130)
+TALK_SKIP_POINT = (1638, 60)
+# 「结束自动战斗」 bottom right / 「自动战斗中」 bottom left.
+RESULT_LEAVE_ROI = (1300, 900, 1920, 1080)
+BATTLE_BUTTON_TEXT = "battle"
+BATTLE_BUTTON_ROI = (1550, 930, 1900, 1040)
+BATTLE_BUTTON_POINT = (1717, 985)
+AUTO_BATTLE_TOGGLE_POINT = (1490, 55)
+# The interaction button (对话 / 调查 ...) that shows left of the skill wheel
+# on arrival, its 「F」 label under it.
+INTERACT_LABEL = "f"
+INTERACT_LABEL_ROI = (1370, 915, 1450, 965)
+INTERACT_POINT = (1410, 885)
+INTERACT_KEY = "F"
+WALKING_TEXTS = ("自动移动中", "自動移動中")
+QUEST_TEXTS = ("主线", "主線")
+QUEST_ROI = (1500, 100, 1920, 260)
+QUEST_KEY = "E"
+# The quest row's goal sits one line under 「主线」.
+QUEST_GOAL_OFFSET = (30, 25)
+# A CG: next to nothing to read, or a subtitle line bottom centre.
+CUTSCENE_SUBTITLE_ROI = (400, 820, 1520, 960)
+CUTSCENE_SUBTITLE_MIN_CHARS = 4
+CUTSCENE_MAX_WORDS = 1
+CUTSCENE_POINT = (960, 1000)
+
+
+def _norm(box) -> str:
+    return normalize_ocr_text(getattr(box, "name", ""))
+
+
+def _centre(box) -> tuple[float, float]:
+    return box.x + box.width / 2, box.y + box.height / 2
+
+
+def _inside(box, roi) -> bool:
+    x, y = _centre(box)
+    left, top, right, bottom = roi
+    return left <= x <= right and top <= y <= bottom
+
+
+def _find(boxes, words, roi=None):
+    wanted = [normalize_ocr_text(word) for word in words]
+    for box in boxes or ():
+        text = _norm(box)
+        if any(word and word in text for word in wanted) and (roi is None or _inside(box, roi)):
+            return box
+    return None
+
+
+def _exact(boxes, word: str, roi):
+    for box in boxes or ():
+        if _norm(box) == word and _inside(box, roi):
+            return box
+    return None
+
+
+def quest_goal_point(box) -> tuple[int, int]:
+    x, y = _centre(box)
+    return round(x + QUEST_GOAL_OFFSET[0]), round(y + QUEST_GOAL_OFFSET[1])
+
+
+def classify(boxes) -> tuple[StoryScreen, tuple[int, int] | None]:
+    """The screen and the reference point to press for it (None: just wait)."""
+    boxes = list(boxes or ())
+    if _find(boxes, INSERT_TEXTS):
+        return StoryScreen.INSERT, INSERT_POINT
+    if _find(boxes, SKIP_TITLES):
+        confirm = _find(boxes, CONFIRM_TEXTS, SKIP_CONFIRM_ROI)
+        if confirm is not None:
+            x, y = _centre(confirm)
+            return StoryScreen.SKIP_CONFIRM, (round(x), round(y))
+    if _find(boxes, AUTO_TEXTS):
+        return StoryScreen.BATTLE_AUTO, None
+    leave = _find(boxes, LEAVE_TEXTS, RESULT_LEAVE_ROI)
+    if leave is not None:
+        x, y = _centre(leave)
+        return StoryScreen.BATTLE_RESULT, (round(x), round(y))
+    if _find(boxes, (BATTLE_BUTTON_TEXT,), BATTLE_BUTTON_ROI) and any(
+        TURN_PATTERN.search(_norm(box)) for box in boxes
+    ):
+        return StoryScreen.BATTLE_READY, AUTO_BATTLE_TOGGLE_POINT
+    if _exact(boxes, normalize_ocr_text(TALK_SKIP_LABEL), TALK_SKIP_LABEL_ROI):
+        return StoryScreen.TALK, TALK_SKIP_POINT
+    if _exact(boxes, INTERACT_LABEL, INTERACT_LABEL_ROI):
+        return StoryScreen.INTERACT, INTERACT_POINT
+    if _find(boxes, WALKING_TEXTS):
+        return StoryScreen.WALKING, None
+    quest = _find(boxes, QUEST_TEXTS, QUEST_ROI)
+    if quest is not None:
+        return StoryScreen.QUEST, quest_goal_point(quest)
+    words = [box for box in boxes if len(_norm(box)) >= 2]
+    subtitle = any(
+        len(_norm(box)) >= CUTSCENE_SUBTITLE_MIN_CHARS and _inside(box, CUTSCENE_SUBTITLE_ROI)
+        for box in boxes
+    )
+    if len(words) <= CUTSCENE_MAX_WORDS or subtitle:
+        return StoryScreen.CUTSCENE, CUTSCENE_POINT
+    return StoryScreen.UNKNOWN, None
+
+
+def quest_goal_text(boxes) -> str:
+    """The goal line under 「主线」 (e.g. 「前往通道另一侧」), '' when unread."""
+    quest = _find(boxes, QUEST_TEXTS, QUEST_ROI)
+    if quest is None:
+        return ""
+    _x, y = _centre(quest)
+    below = [
+        box
+        for box in boxes or ()
+        if _inside(box, QUEST_ROI) and 10 <= _centre(box)[1] - y <= 45 and len(_norm(box)) >= 2
+    ]
+    return " ".join(str(box.name) for box in sorted(below, key=lambda box: box.x))
