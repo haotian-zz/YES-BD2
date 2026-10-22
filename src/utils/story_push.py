@@ -77,7 +77,9 @@ INSERT_TEXTS = ("未插好游戏卡", "未插好遊戲卡")
 INSERT_POINT = (960, 654)
 SKIP_TITLES = ("跳过对话", "跳過對話")
 CONFIRM_TEXTS = ("确认", "確認")
-SKIP_CONFIRM_ROI = (900, 700, 1200, 850)
+# 确认 sits at (1045, 780), or higher at (1044, 628) for a talk inside a
+# battle scene (card 16, live 2026-10-22).
+SKIP_CONFIRM_ROI = (900, 550, 1200, 850)
 # A field dialog opened by a stray click (the 「战场角色设置」 icon sits bottom
 # centre of the field, live 2026-10-22): 取消 closes it.
 DIALOG_TITLES = ("战场角色设置", "戰場角色設置")

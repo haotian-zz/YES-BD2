@@ -60,6 +60,13 @@ class ClassifyTest(unittest.TestCase):
         )
         self.assertEqual((StoryScreen.SKIP_CONFIRM, (1045, 780)), (screen, point))
 
+    def test_skip_dialog_over_a_battle_talk_sits_higher(self):
+        screen, point = story_push.classify(
+            [_box("跳过对话", 958, 460), _box("跳过对话。", 958, 513), _box("可于剧情菜单重新查看。", 958, 550, 240),
+             _box("取消", 874, 628), _box("确认", 1044, 628), _box("悠丝缇亚", 340, 930)]
+        )
+        self.assertEqual((StoryScreen.SKIP_CONFIRM, (1044, 628)), (screen, point))
+
     def test_battle_waiting_for_its_first_turn_turns_auto_battle_on(self):
         screen, point = story_push.classify(
             [_box("« TURN.1 »", 960, 105, 140), _box("更换", 124, 1000), _box("预设", 424, 1000),
