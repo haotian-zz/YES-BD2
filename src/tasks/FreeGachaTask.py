@@ -133,7 +133,7 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
             self.capture_frame(), "抽抽乐入口点击后"
         ):
             self.log_info("白嫖抽抽乐：点了抽抽乐入口后还在主页，再点一次。")
-            self._click_reference(*GACHA_ENTRY_REFERENCE_POINT, after_sleep=0.5)
+            self._click_reference(*GACHA_ENTRY_REFERENCE_POINT, after_sleep=0.5)  # 不用确认：the gacha page is waited for below
             loading_state, gacha_found, _ = self._wait_loading_or_gacha_page("进入抽卡页")
         if loading_state == "stuck":
             return self._fail_run("进入抽卡页")
