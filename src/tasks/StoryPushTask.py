@@ -240,6 +240,7 @@ class StoryPushTask(CartridgeFieldTask):
         if not rows_seen:
             self._note_why("游戏卡珍藏集里一排剧情游戏卡都没看到")
             return None
+        self._save_flow_diagnostic("story_cards_all_full")
         return "none"
 
     def _row_header_y(self, titles) -> float | None:
@@ -275,6 +276,10 @@ class StoryPushTask(CartridgeFieldTask):
         for _page in range(ROW_DRAGS_MAX):
             cards = story_cards.row_cards(self._reference_frame(), header_y)
             self.info_set(f"{row_name}进度", " ".join(card.bar for card in cards))
+            self.log_info(
+                f"{LABEL}：「{row_name}」行标题 y={header_y:.0f}，这一页 "
+                + (" ".join(f"{card.plus[0]}:{card.bar}" for card in cards) or "没有卡")
+            )
             card = story_cards.first_unfinished(cards)
             if card is not None:
                 return card
