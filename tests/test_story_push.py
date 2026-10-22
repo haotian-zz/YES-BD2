@@ -95,6 +95,16 @@ class ClassifyTest(unittest.TestCase):
         )
         self.assertEqual((StoryScreen.CUTSCENE, story_push.CUTSCENE_POINT), (screen, point))
 
+    def test_field_hud_alone_is_never_a_cg(self):
+        self.assertEqual(StoryScreen.UNKNOWN, story_push.classify([_box("SPACE", 1686, 968), _box("TAB", 1710, 1048)])[0])
+
+    def test_battle_role_dialog_is_cancelled(self):
+        screen, point = story_push.classify(
+            FIELD_HUD + [_box("战场角色设置", 420, 293, 160), _box("剧情角色阵形", 435, 356, 140),
+                         _box("当前战斗阵形", 640, 356, 140), _box("取消", 1158, 811), _box("确认", 1428, 811)]
+        )
+        self.assertEqual((StoryScreen.DIALOG, (1158, 811)), (screen, point))
+
     def test_field_with_the_quest_row_unread_is_unknown(self):
         self.assertEqual(StoryScreen.UNKNOWN, story_push.classify(FIELD_HUD)[0])
 

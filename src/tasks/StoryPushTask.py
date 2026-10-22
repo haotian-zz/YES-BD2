@@ -293,6 +293,7 @@ class StoryPushTask(CartridgeFieldTask):
                 StoryScreen.CHOICE,
                 StoryScreen.TALK,
                 StoryScreen.SKIP_CONFIRM,
+                StoryScreen.DIALOG,
                 StoryScreen.INTERACT,
                 StoryScreen.CUTSCENE,
             ):

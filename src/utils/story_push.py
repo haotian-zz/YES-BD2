@@ -36,6 +36,7 @@ from src.utils.ocr_utils import normalize_ocr_text
 class StoryScreen(str, Enum):
     INSERT = "insert"
     SKIP_CONFIRM = "skip_confirm"
+    DIALOG = "dialog"
     CHOICE = "choice"
     TALK = "talk"
     BATTLE_AUTO = "battle_auto"
@@ -55,6 +56,10 @@ INSERT_POINT = (960, 654)
 SKIP_TITLES = ("跳过对话", "跳過對話")
 CONFIRM_TEXTS = ("确认", "確認")
 SKIP_CONFIRM_ROI = (900, 700, 1200, 850)
+# A field dialog opened by a stray click (the 「战场角色设置」 icon sits bottom
+# centre of the field, live 2026-10-22): 取消 closes it.
+DIALOG_TITLES = ("战场角色设置", "戰場角色設置")
+CANCEL_TEXTS = ("取消",)
 # F2 label under the talk's 跳过 icon; the icon itself is pressed.
 TALK_SKIP_LABEL = "F2"
 TALK_SKIP_LABEL_ROI = (1550, 70, 1720, 130)
@@ -81,11 +86,14 @@ QUEST_ROI = (1500, 100, 1920, 260)
 QUEST_KEY = "E"
 # The quest row's goal sits one line under 「主线」.
 QUEST_GOAL_OFFSET = (30, 25)
-# A CG: next to nothing to read, or a subtitle line bottom centre.
+# A CG: next to nothing to read, or a subtitle line bottom centre.  Never
+# with the field HUD's 「SPACE」 / 「TAB」 labels read.  Clicked mid-screen:
+# bottom centre of the field holds the 战场角色设置 icon (967, 997).
 CUTSCENE_SUBTITLE_ROI = (400, 820, 1520, 960)
 CUTSCENE_SUBTITLE_MIN_CHARS = 4
 CUTSCENE_MAX_WORDS = 1
-CUTSCENE_POINT = (960, 1000)
+CUTSCENE_POINT = (960, 700)
+FIELD_HUD_LABELS = ("space", "tab")
 
 
 # The game's OCR reads the small 「F1 F2 F3」 / 「F」 key labels as 「日 y 因」
@@ -173,6 +181,11 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
         if confirm is not None:
             x, y = _centre(confirm)
             return StoryScreen.SKIP_CONFIRM, (round(x), round(y))
+    if _find(boxes, DIALOG_TITLES):
+        cancel = _find(boxes, CANCEL_TEXTS)
+        if cancel is not None:
+            x, y = _centre(cancel)
+            return StoryScreen.DIALOG, (round(x), round(y))
     if _find(boxes, AUTO_TEXTS):
         return StoryScreen.BATTLE_AUTO, None
     leave = _find(boxes, LEAVE_TEXTS, RESULT_LEAVE_ROI)
@@ -204,7 +217,8 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
         len(_norm(box)) >= CUTSCENE_SUBTITLE_MIN_CHARS and _inside(box, CUTSCENE_SUBTITLE_ROI)
         for box in boxes
     )
-    if len(words) <= CUTSCENE_MAX_WORDS or subtitle:
+    field = any(_norm(box) in FIELD_HUD_LABELS for box in boxes)
+    if not field and (len(words) <= CUTSCENE_MAX_WORDS or subtitle):
         return StoryScreen.CUTSCENE, CUTSCENE_POINT
     return StoryScreen.UNKNOWN, None
 
