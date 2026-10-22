@@ -64,8 +64,9 @@ DEFEAT_WORDS = ("defeat",)
 FIELD_ONLY_KEY_SECONDS = 4.0
 POLL_SECONDS = 1.0
 # A clear is followed by the next story, the 「指南」 book or the field
-# within this long.
-AFTER_CLEARED_SECONDS = 20.0
+# within this many looks (about 2 s each).
+AFTER_CLEARED_LOOKS = 10
+UNLOCK_CLOSE_MAX = 4
 STORY_GOES_ON = (
     StoryScreen.INSERT,
     StoryScreen.SKIP_CONFIRM,
@@ -112,7 +113,6 @@ class StoryPushTask(CartridgeFieldTask):
         deadline = monotonic() + 60 * max(1, int(self.config.get(MAX_MINUTES_KEY, MAX_MINUTES)))
         cleared = 0
         inside = self._story_screen_now()
-        in_collection = False
         while True:
             if inside:
                 inside = False
@@ -120,11 +120,11 @@ class StoryPushTask(CartridgeFieldTask):
                 if not cleared:
                     self.log_info(f"{LABEL}：已经在剧情游戏卡里，直接推图。")
             else:
-                if not in_collection and not self._open_page_from_home(
+                self._close_unlock_notices()
+                if not self._open_page_from_home(
                     "游戏卡珍藏集", CARTRIDGE_SLOT_POINT, COLLECTION_TITLE_KEYWORDS
                 ):
                     return self._claim_fail("打开游戏卡珍藏集")
-                in_collection = False
                 card = self._enter_unfinished_story_card()
                 if card is None:
                     return self._claim_fail("进入剧情游戏卡")
@@ -146,10 +146,12 @@ class StoryPushTask(CartridgeFieldTask):
             after = self._after_clear()
             go_on = bool(self.config.get(CONTINUE_KEY, True)) and monotonic() < deadline
             if after == StoryScreen.GUIDE:
+                if not go_on and self.config.get(CONTINUE_KEY, True):
+                    # Left for 主页 only when going on.
+                    self._close_unlock_notices()
+                    return self._wait_for_home_confirmation(f"{LABEL}返回主页", timeout=10.0)
                 if not go_on:
-                    # The guide was left for the collection only when going on.
-                    return self._back_home_from_collection() if self.config.get(CONTINUE_KEY, True) else True
-                in_collection = True
+                    return True
                 continue
             if after is not None:
                 if not go_on:
@@ -165,22 +167,29 @@ class StoryPushTask(CartridgeFieldTask):
     def _after_clear(self) -> StoryScreen | None:
         """GUIDE once its button opened the collection, another story screen
         when the story plays on, None for the played card's field."""
-        until = monotonic() + AFTER_CLEARED_SECONDS
-        while monotonic() < until:
+        for _look in range(AFTER_CLEARED_LOOKS):
             boxes, seen = self._read_screen()
             screen, point = story_push.classify(boxes, seen)
             if screen == StoryScreen.GUIDE:
                 if not self.config.get(CONTINUE_KEY, True):
                     return screen
+                # The button lands on 主页 (live 2026-10-22), not the collection.
                 self.log_info(f"{LABEL}：指南页点「前往游戏卡珍藏集」。")
-                self._click_reference(*point, after_sleep=1.0)  # 不用确认：下面等珍藏集标题
-                if self._wait_for_title("游戏卡珍藏集", COLLECTION_TITLE_KEYWORDS, timeout=10.0, quiet=True):
-                    return screen
-                continue
+                self._click_reference(*point, after_sleep=2.0)  # 不用确认：接着由回主页、开珍藏集流程确认
+                return screen
             if screen in STORY_GOES_ON:
                 return screen
             self.sleep(POLL_SECONDS)
         return None
+
+    def _close_unlock_notices(self) -> None:
+        """✕ the 「主线任务解锁」 cards 主页 shows after a clear."""
+        for _look in range(UNLOCK_CLOSE_MAX):
+            boxes = self._reference_boxes(self.capture_frame(), FULL_SCREEN, LABEL)
+            if not story_push.unlock_notice(boxes):
+                return
+            self.log_info(f"{LABEL}：关掉「主线任务解锁」提示。")
+            self._click_reference(*story_push.UNLOCK_CLOSE_POINT, after_sleep=1.5)  # 不用确认：下一轮重看提示还在不在
 
     def _story_screen_now(self) -> bool:
         """Two reads in a row show a story screen (talk, CG, battle, field)."""
@@ -207,11 +216,13 @@ class StoryPushTask(CartridgeFieldTask):
         """
         # The page opens scrolled to the card in use; the top rows first.
         self.scroll_client((0.5, 0.55), PAGE_SCROLL_UP_NOTCHES, count=1, after_sleep=1.0)
+        rows_seen = 0
         for row_name, titles in ROWS:
             header_y = self._row_header_y(titles)
             if header_y is None:
                 self.log_info(f"{LABEL}：游戏卡珍藏集里没看到「{row_name}」这一排。")
                 continue
+            rows_seen += 1
             card = self._first_unfinished_in_row(row_name, header_y)
             if card is None:
                 continue
@@ -219,6 +230,9 @@ class StoryPushTask(CartridgeFieldTask):
             self.log_info(f"{LABEL}：进入{label}。")
             self._click_reference(*card.click_point, after_sleep=2.0)  # 不用确认：推图循环接着看画面
             return label
+        if not rows_seen:
+            self._note_why("游戏卡珍藏集里一排剧情游戏卡都没看到")
+            return None
         return "none"
 
     def _row_header_y(self, titles) -> float | None:

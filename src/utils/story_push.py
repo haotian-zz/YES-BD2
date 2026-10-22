@@ -59,7 +59,11 @@ CLEARED_TEXTS = ("完成主线任务", "已完成普通难度", "已完成普通
 CLEARED_POINT = (960, 900)
 # Then (WAY OF THE DEMON, same day) the cartridge's 「指南」 book: 普通 完成 /
 # 困难 可进行, and 「前往游戏卡珍藏集」 bottom right; Esc and H do nothing there.
+# That button goes back to 主页, which shows one 「主线任务解锁」 card per
+# difficulty just opened (困难 of the cards played) until ✕ top right.
 GUIDE_TEXTS = ("前往游戏卡珍藏集", "前往遊戲卡珍藏集")
+UNLOCK_TEXTS = ("主线任务解锁", "主線任務解鎖")
+UNLOCK_CLOSE_POINT = (1770, 52)
 # A cartridge entered for the first time: 「未插好游戏卡。请通过多次点击开始游戏。」
 # under the card, a ring to click (Enter or Space) over it (SOUL-WAGER, 2026-10-22).
 INSERT_TEXTS = ("未插好游戏卡", "未插好遊戲卡")
@@ -270,3 +274,7 @@ def same_goal(first: str, second: str) -> bool:
         return False
     match = SequenceMatcher(None, first, second, autojunk=False).find_longest_match(0, len(first), 0, len(second))
     return match.size >= min(GOAL_SAME_CHARS, len(first), len(second))
+
+
+def unlock_notice(boxes) -> bool:
+    return _find(boxes, UNLOCK_TEXTS) is not None

@@ -127,6 +127,12 @@ class ClassifyTest(unittest.TestCase):
         )
         self.assertEqual((StoryScreen.GUIDE, (1648, 990)), (screen, point))
 
+    def test_unlock_notice_on_home(self):
+        boxes = [_box("主线任务解锁", 390, 463, 180), _box("「恶魔的傲骨」游戏卡主线任务的困难难度开启。", 390, 563, 440),
+                 _box("移动", 400, 684), _box("抽抽乐", 160, 1020)]
+        self.assertTrue(story_push.unlock_notice(boxes))
+        self.assertFalse(story_push.unlock_notice(FIELD_HUD))
+
     def test_first_entry_insert_screen_clicks_the_ring(self):
         screen, point = story_push.classify(
             [_box("Enter or Space", 960, 718, 120), _box("未插好游戏卡。请通过多次点击开始游戏。", 960, 777, 420)]
