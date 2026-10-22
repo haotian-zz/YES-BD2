@@ -219,6 +219,18 @@ class StoryPushTask(CartridgeFieldTask):
             self.log_info(f"{LABEL}：关掉「主线任务解锁」提示。")
             self._click_reference(*story_push.UNLOCK_CLOSE_POINT, after_sleep=1.5)  # 不用确认：下一轮重看提示还在不在
 
+    def clear_temporary_home_announcement_if_needed(self, **signals) -> bool:
+        """The 「主线任务解锁」 card a clear leaves on 主页 dims it like a login
+        announcement, but only its ✕ closes it (live 2026-10-22: the
+        announcement spot under it was clicked for a minute)."""
+        if signals.get("brightness", 0.0) < signals.get("brightness_threshold", 0.0):
+            boxes = self._reference_boxes(self.capture_frame(), FULL_SCREEN, LABEL)
+            if story_push.unlock_notice(boxes):
+                self.log_info(f"{LABEL}：关掉「主线任务解锁」提示。")
+                self._click_reference(*story_push.UNLOCK_CLOSE_POINT, after_sleep=1.5)  # 不用确认：主页确认流程下一轮重看
+                return True
+        return super().clear_temporary_home_announcement_if_needed(**signals)
+
     def _story_screen_now(self) -> bool:
         """Two reads in a row show a story screen (talk, CG, battle, field)."""
         for look in range(2):
