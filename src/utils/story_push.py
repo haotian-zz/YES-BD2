@@ -36,6 +36,7 @@ from src.utils.ocr_utils import normalize_ocr_text
 
 class StoryScreen(str, Enum):
     CLEARED = "cleared"
+    GUIDE = "guide"
     INSERT = "insert"
     SKIP_CONFIRM = "skip_confirm"
     DIALOG = "dialog"
@@ -56,6 +57,9 @@ class StoryScreen(str, Enum):
 # live 2026-10-22).
 CLEARED_TEXTS = ("完成主线任务", "已完成普通难度", "已完成普通難度")
 CLEARED_POINT = (960, 900)
+# Then (WAY OF THE DEMON, same day) the cartridge's 「指南」 book: 普通 完成 /
+# 困难 可进行, and 「前往游戏卡珍藏集」 bottom right; Esc and H do nothing there.
+GUIDE_TEXTS = ("前往游戏卡珍藏集", "前往遊戲卡珍藏集")
 # A cartridge entered for the first time: 「未插好游戏卡。请通过多次点击开始游戏。」
 # under the card, a ring to click (Enter or Space) over it (SOUL-WAGER, 2026-10-22).
 INSERT_TEXTS = ("未插好游戏卡", "未插好遊戲卡")
@@ -188,6 +192,10 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
     seen = seen or {}
     if _find(boxes, CLEARED_TEXTS):
         return StoryScreen.CLEARED, CLEARED_POINT
+    guide = _find(boxes, GUIDE_TEXTS)
+    if guide is not None:
+        x, y = _centre(guide)
+        return StoryScreen.GUIDE, (round(x), round(y))
     if _find(boxes, INSERT_TEXTS):
         return StoryScreen.INSERT, INSERT_POINT
     if _find(boxes, SKIP_TITLES):

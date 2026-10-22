@@ -119,6 +119,14 @@ class ClassifyTest(unittest.TestCase):
         )
         self.assertEqual((StoryScreen.CLEARED, story_push.CLEARED_POINT), (screen, point))
 
+    def test_guide_book_after_the_clear_opens_the_collection(self):
+        screen, point = story_push.classify(
+            [_box("指南", 793, 218), _box("恶魔的傲骨", 803, 290, 140), _box("普通", 760, 398), _box("完成", 760, 422),
+             _box("困难", 760, 462), _box("可进行", 768, 486), _box("前往游戏卡珍藏集", 1648, 990, 200),
+             _box("SPACE OR ENTER", 1648, 1029, 100)]
+        )
+        self.assertEqual((StoryScreen.GUIDE, (1648, 990)), (screen, point))
+
     def test_first_entry_insert_screen_clicks_the_ring(self):
         screen, point = story_push.classify(
             [_box("Enter or Space", 960, 718, 120), _box("未插好游戏卡。请通过多次点击开始游戏。", 960, 777, 420)]

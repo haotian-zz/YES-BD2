@@ -63,7 +63,9 @@ DEFEAT_WORDS = ("defeat",)
 # E after this long.
 FIELD_ONLY_KEY_SECONDS = 4.0
 POLL_SECONDS = 1.0
-AFTER_CLEARED_SECONDS = 3.0
+# A clear is followed by the next story, the 「指南」 book or the field
+# within this long.
+AFTER_CLEARED_SECONDS = 20.0
 STORY_GOES_ON = (
     StoryScreen.INSERT,
     StoryScreen.SKIP_CONFIRM,
@@ -110,6 +112,7 @@ class StoryPushTask(CartridgeFieldTask):
         deadline = monotonic() + 60 * max(1, int(self.config.get(MAX_MINUTES_KEY, MAX_MINUTES)))
         cleared = 0
         inside = self._story_screen_now()
+        in_collection = False
         while True:
             if inside:
                 inside = False
@@ -117,10 +120,11 @@ class StoryPushTask(CartridgeFieldTask):
                 if not cleared:
                     self.log_info(f"{LABEL}：已经在剧情游戏卡里，直接推图。")
             else:
-                if not self._open_page_from_home(
+                if not in_collection and not self._open_page_from_home(
                     "游戏卡珍藏集", CARTRIDGE_SLOT_POINT, COLLECTION_TITLE_KEYWORDS
                 ):
                     return self._claim_fail("打开游戏卡珍藏集")
+                in_collection = False
                 card = self._enter_unfinished_story_card()
                 if card is None:
                     return self._claim_fail("进入剧情游戏卡")
@@ -134,25 +138,49 @@ class StoryPushTask(CartridgeFieldTask):
                 return self._claim_fail("推图")
             cleared += 1
             self.log_info(f"{LABEL}：{card}已推完（本次第 {cleared} 张）。")
-            # The prologue (卡 1) goes straight on into the next story's talks
-            # and CGs after its 「完成主线任务」 (live 2026-10-22): no field to
-            # leave, so that story is pushed where it plays.
-            self.sleep(AFTER_CLEARED_SECONDS)
-            follows = self._story_follows()
-            if not bool(self.config.get(CONTINUE_KEY, True)) or monotonic() >= deadline:
-                return True if follows else self._field_to_home()
-            if follows:
+            # What follows a clear differs (live 2026-10-22): the prologue (卡 1)
+            # goes straight on into the next story's talks and CGs, pushed where
+            # it plays; WAY OF THE DEMON opens its 「指南」 book, whose
+            # 「前往游戏卡珍藏集」 leads to the next card; else the played
+            # card's field is left for 主页.
+            after = self._after_clear()
+            go_on = bool(self.config.get(CONTINUE_KEY, True)) and monotonic() < deadline
+            if after == StoryScreen.GUIDE:
+                if not go_on:
+                    # The guide was left for the collection only when going on.
+                    return self._back_home_from_collection() if self.config.get(CONTINUE_KEY, True) else True
+                in_collection = True
+                continue
+            if after is not None:
+                if not go_on:
+                    return True
                 self.log_info(f"{LABEL}：推完后游戏直接接着播下一段剧情，继续推。")
                 inside = True
                 continue
+            if not go_on:
+                return self._field_to_home()
             if not self._field_to_home():
                 return self._claim_fail("返回主页")
 
-    def _story_follows(self) -> bool:
-        """After 「完成主线任务」: a story screen (not the played card's bare field)."""
-        boxes, seen = self._read_screen()
-        screen, _point = story_push.classify(boxes, seen)
-        return screen in STORY_GOES_ON
+    def _after_clear(self) -> StoryScreen | None:
+        """GUIDE once its button opened the collection, another story screen
+        when the story plays on, None for the played card's field."""
+        until = monotonic() + AFTER_CLEARED_SECONDS
+        while monotonic() < until:
+            boxes, seen = self._read_screen()
+            screen, point = story_push.classify(boxes, seen)
+            if screen == StoryScreen.GUIDE:
+                if not self.config.get(CONTINUE_KEY, True):
+                    return screen
+                self.log_info(f"{LABEL}：指南页点「前往游戏卡珍藏集」。")
+                self._click_reference(*point, after_sleep=1.0)  # 不用确认：下面等珍藏集标题
+                if self._wait_for_title("游戏卡珍藏集", COLLECTION_TITLE_KEYWORDS, timeout=10.0, quiet=True):
+                    return screen
+                continue
+            if screen in STORY_GOES_ON:
+                return screen
+            self.sleep(POLL_SECONDS)
+        return None
 
     def _story_screen_now(self) -> bool:
         """Two reads in a row show a story screen (talk, CG, battle, field)."""
@@ -282,7 +310,9 @@ class StoryPushTask(CartridgeFieldTask):
             if screen != StoryScreen.UNKNOWN:
                 field_only_since = None
 
-            if screen == StoryScreen.CLEARED:
+            if screen == StoryScreen.GUIDE:
+                return "cleared"
+            elif screen == StoryScreen.CLEARED:
                 self.log_info(f"{LABEL}：普通难度推完了。")
                 self._click_reference(*point, after_sleep=2.0)  # 不用确认：关掉完成画面后由回主页流程接手
                 return "cleared"
