@@ -64,6 +64,9 @@ HOME_BAR_ROI = (0, 950, 1300, 1080)
 # live 2026-10-22).
 CLEARED_TEXTS = ("完成主线任务", "已完成普通难度", "已完成普通難度")
 CLEARED_POINT = (960, 900)
+# PATH OF TRIALS (卡 17, live 2026-10-22) kept it up through a click, H and the
+# home recovery; Space closed it.
+CLEARED_KEY_CODE = 0x20  # VK_SPACE
 # Then (WAY OF THE DEMON, same day) the cartridge's 「指南」 book: 普通 完成 /
 # 困难 可进行, and 「前往游戏卡珍藏集」 bottom right; Esc and H do nothing there.
 # That button goes back to 主页, which shows one 「主线任务解锁」 card per

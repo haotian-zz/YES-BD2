@@ -21,6 +21,7 @@ from time import monotonic
 import cv2
 from qfluentwidgets import FluentIcon
 
+from src.tasks.BaseBD2Task import KEY_TAP_SECONDS
 from src.tasks.DoomBookTask import (
     CARTRIDGE_SLOT_POINT,
     COLLECTION_TITLE_KEYWORDS,
@@ -180,9 +181,19 @@ class StoryPushTask(CartridgeFieldTask):
     def _after_clear(self) -> StoryScreen | None:
         """GUIDE once its button opened the collection, another story screen
         when the story plays on, None for the played card's field."""
+        cleared_shown = 0
         for _look in range(AFTER_CLEARED_LOOKS):
             boxes, seen = self._read_screen()
             screen, point = story_push.classify(boxes, seen)
+            if screen == StoryScreen.CLEARED:
+                # Still up after its click: Space, then a click again.
+                cleared_shown += 1
+                self.log_info(f"{LABEL}：完成画面还在，再关一次。")
+                if cleared_shown % 2 and self._send_game_key(story_push.CLEARED_KEY_CODE, KEY_TAP_SECONDS):
+                    self.sleep(2.0)
+                else:
+                    self._click_reference(*point, after_sleep=2.0)  # 不用确认：下一轮重看完成画面还在不在
+                continue
             if screen == StoryScreen.GUIDE:
                 if not self.config.get(CONTINUE_KEY, True):
                     return screen
