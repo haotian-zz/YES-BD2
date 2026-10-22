@@ -67,6 +67,8 @@ POLL_SECONDS = 1.0
 # within this many looks (about 2 s each).
 AFTER_CLEARED_LOOKS = 10
 UNLOCK_CLOSE_MAX = 4
+# F presses when the goal row starts no walk (the goal is right here).
+INTERACT_KEY_PRESSES = 2
 # Goal presses before the interaction button is taken (see _push).
 INTERACT_QUEST_FIRST = 1
 # A walk can stall behind a jar on a ledge, the banner still up (card 15,
@@ -346,6 +348,11 @@ class StoryPushTask(CartridgeFieldTask):
                 elif key_presses < QUEST_KEY_PRESSES:
                     key_presses += 1
                     self.tap_key(story_push.QUEST_KEY, after_sleep=1.5)
+                elif key_presses < QUEST_KEY_PRESSES + INTERACT_KEY_PRESSES:
+                    # Already beside the goal (nowhere to walk), its button
+                    # not the one matched: the interaction key.
+                    key_presses += 1
+                    self.tap_key(story_push.INTERACT_KEY, after_sleep=1.5)
                 else:
                     return f"按了主线任务也没有开始自动移动（主线目标「{goal or last_goal}」，可能需要手动解谜）"
             elif screen == StoryScreen.WALKING:
