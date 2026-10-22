@@ -54,6 +54,8 @@ QUEST_PRESSES_BEFORE_KEY = 3
 QUEST_KEY_PRESSES = 2
 # Auto-battle toggle presses on one battle before 「BATTLE」 is pressed instead.
 AUTO_TOGGLE_PRESSES = 3
+# 跳过 presses on one talk before its line is clicked on instead.
+TALK_SKIP_PRESSES = 2
 # Lost battles in one cartridge before the run stops.
 DEFEATS_MAX = 2
 DEFEAT_WORDS = ("defeat",)
@@ -229,7 +231,7 @@ class StoryPushTask(CartridgeFieldTask):
         no_progress = 60 * max(1, int(self.config.get(NO_PROGRESS_KEY, NO_PROGRESS_MINUTES)))
         last_kind, last_goal = None, ""
         progressed_at = monotonic()
-        quest_presses = key_presses = toggle_presses = defeats = 0
+        quest_presses = key_presses = toggle_presses = skip_presses = defeats = 0
         field_only_since = None
         while True:
             now = monotonic()
@@ -243,15 +245,18 @@ class StoryPushTask(CartridgeFieldTask):
             boxes, seen = self._read_screen()
             screen, point = story_push.classify(boxes, seen)
             goal = story_push.quest_goal_text(boxes)
-            if screen != last_kind or (goal and goal != last_goal):
+            new_goal = bool(goal) and not story_push.same_goal(goal, last_goal)
+            if screen != last_kind or new_goal:
                 progressed_at = now
                 if screen != last_kind:
                     self.log_info(f"{LABEL}：画面 {screen.value}")
-                if goal and goal != last_goal:
+                if new_goal:
                     self.log_info(f"{LABEL}：主线目标「{goal}」。")
                     quest_presses = key_presses = 0
                 if screen != StoryScreen.BATTLE_READY:
                     toggle_presses = 0
+                if screen != StoryScreen.TALK:
+                    skip_presses = 0
             last_kind = screen
             if goal:
                 last_goal = goal
@@ -278,6 +283,12 @@ class StoryPushTask(CartridgeFieldTask):
                 else:
                     self.log_info(f"{LABEL}：自动战斗开关没打开，改按「BATTLE」。")
                     self._click_reference(*story_push.BATTLE_BUTTON_POINT, after_sleep=2.0)  # 不用确认：推图循环下一轮重看画面
+            elif screen == StoryScreen.TALK:
+                skip_presses += 1
+                if skip_presses <= TALK_SKIP_PRESSES:
+                    self._click_reference(*point, after_sleep=1.2)  # 不用确认：推图循环下一轮看「跳过对话」
+                else:
+                    self._click_reference(*story_push.TALK_ADVANCE_POINT, after_sleep=1.2)  # 不用确认：跳过无效的对话点台词往下走
             elif screen == StoryScreen.BATTLE_AUTO:
                 self.sleep(POLL_SECONDS * 2)
             elif screen == StoryScreen.BATTLE_RESULT:
@@ -291,7 +302,6 @@ class StoryPushTask(CartridgeFieldTask):
             elif screen in (
                 StoryScreen.INSERT,
                 StoryScreen.CHOICE,
-                StoryScreen.TALK,
                 StoryScreen.SKIP_CONFIRM,
                 StoryScreen.DIALOG,
                 StoryScreen.INTERACT,

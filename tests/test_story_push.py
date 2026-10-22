@@ -140,6 +140,14 @@ class ClassifyTest(unittest.TestCase):
         boxes = FIELD_HUD + [_box("主线", 1625, 138), _box("前往通道另一侧", 1660, 165, 140)]
         self.assertEqual("前往通道另一侧", story_push.quest_goal_text(boxes))
         self.assertEqual("", story_push.quest_goal_text(FIELD_HUD))
+        doubled = FIELD_HUD + [_box("主线", 1625, 138), _box("进入门内", 1640, 165, 80), _box("进入门", 1730, 165, 60)]
+        self.assertEqual("进入门内", story_push.quest_goal_text(doubled))
+        self.assertTrue(story_push.same_goal("日进入门内进入门内", "进入门内"))
+        self.assertFalse(story_push.same_goal("前往传输装置", "进入门内"))
+        self.assertTrue(story_push.same_goal("日兰身边逃开 从兰身", "从兰身边逃开"))
+        self.assertFalse(story_push.same_goal("返回餐厅地下", "前往餐厅一楼"))
+        self.assertFalse(story_push.same_goal("打倒兰", "与兰对话"))
+        self.assertFalse(story_push.same_goal("进入门内", ""))
 
 
 if __name__ == "__main__":

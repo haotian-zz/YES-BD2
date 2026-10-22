@@ -23,6 +23,7 @@ height), as ``ClaimPageMixin._reference_boxes`` gives them.
 
 from __future__ import annotations
 
+from difflib import SequenceMatcher
 from enum import Enum
 from pathlib import Path
 
@@ -64,6 +65,9 @@ CANCEL_TEXTS = ("取消",)
 TALK_SKIP_LABEL = "F2"
 TALK_SKIP_LABEL_ROI = (1550, 70, 1720, 130)
 TALK_SKIP_POINT = (1638, 60)
+# A talk inside a battle (before its first turn) ignores 跳过; a click on the
+# line goes on (live 2026-10-22, card 1 「打倒堕天使」).
+TALK_ADVANCE_POINT = (960, 950)
 # A talk asking for an answer: the options stacked bottom centre (「1 起床。」
 # 「2 重新躺下。」, the card 1 prologue); the first one is taken.
 CHOICE_ROI = (600, 820, 1320, 1060)
@@ -86,6 +90,8 @@ QUEST_ROI = (1500, 100, 1920, 260)
 QUEST_KEY = "E"
 # The quest row's goal sits one line under 「主线」.
 QUEST_GOAL_OFFSET = (30, 25)
+# Goals sharing this many characters in a row are one goal read twice.
+GOAL_SAME_CHARS = 4
 # A CG: next to nothing to read, or a subtitle line bottom centre.  Never
 # with the field HUD's 「SPACE」 / 「TAB」 labels read.  Clicked mid-screen:
 # bottom centre of the field holds the 战场角色设置 icon (967, 997).
@@ -234,4 +240,17 @@ def quest_goal_text(boxes) -> str:
         for box in boxes or ()
         if _inside(box, QUEST_ROI) and 10 <= _centre(box)[1] - y <= 45 and len(_norm(box)) >= 2
     ]
-    return " ".join(str(box.name) for box in sorted(below, key=lambda box: box.x))
+    # The goal is one line; a fading copy of it (the walk starting) can sit
+    # beside it, so the widest box is taken alone.
+    return str(max(below, key=lambda box: box.width).name) if below else ""
+
+
+def same_goal(first: str, second: str) -> bool:
+    """Two reads of one goal: the E key label (read 「日」) or a fading copy
+    of the line can stick to it, a character or two misread (「日进入门内进入门内」,
+    「日兰身边逃开从兰身」 for 「从兰身边逃开」, live 2026-10-22)."""
+    first, second = normalize_ocr_text(first), normalize_ocr_text(second)
+    if not (first and second):
+        return False
+    match = SequenceMatcher(None, first, second, autojunk=False).find_longest_match(0, len(first), 0, len(second))
+    return match.size >= min(GOAL_SAME_CHARS, len(first), len(second))
