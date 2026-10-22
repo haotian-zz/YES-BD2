@@ -63,6 +63,19 @@ DEFEAT_WORDS = ("defeat",)
 # E after this long.
 FIELD_ONLY_KEY_SECONDS = 4.0
 POLL_SECONDS = 1.0
+AFTER_CLEARED_SECONDS = 3.0
+STORY_GOES_ON = (
+    StoryScreen.INSERT,
+    StoryScreen.SKIP_CONFIRM,
+    StoryScreen.CHOICE,
+    StoryScreen.TALK,
+    StoryScreen.BATTLE_AUTO,
+    StoryScreen.BATTLE_RESULT,
+    StoryScreen.BATTLE_READY,
+    StoryScreen.WALKING,
+    StoryScreen.QUEST,
+    StoryScreen.CUTSCENE,
+)
 
 
 class StoryPushTask(CartridgeFieldTask):
@@ -101,7 +114,8 @@ class StoryPushTask(CartridgeFieldTask):
             if inside:
                 inside = False
                 card = "当前的剧情游戏卡"
-                self.log_info(f"{LABEL}：已经在剧情游戏卡里，直接推图。")
+                if not cleared:
+                    self.log_info(f"{LABEL}：已经在剧情游戏卡里，直接推图。")
             else:
                 if not self._open_page_from_home(
                     "游戏卡珍藏集", CARTRIDGE_SLOT_POINT, COLLECTION_TITLE_KEYWORDS
@@ -120,10 +134,25 @@ class StoryPushTask(CartridgeFieldTask):
                 return self._claim_fail("推图")
             cleared += 1
             self.log_info(f"{LABEL}：{card}已推完（本次第 {cleared} 张）。")
+            # The prologue (卡 1) goes straight on into the next story's talks
+            # and CGs after its 「完成主线任务」 (live 2026-10-22): no field to
+            # leave, so that story is pushed where it plays.
+            self.sleep(AFTER_CLEARED_SECONDS)
+            follows = self._story_follows()
             if not bool(self.config.get(CONTINUE_KEY, True)) or monotonic() >= deadline:
-                return self._field_to_home()
+                return True if follows else self._field_to_home()
+            if follows:
+                self.log_info(f"{LABEL}：推完后游戏直接接着播下一段剧情，继续推。")
+                inside = True
+                continue
             if not self._field_to_home():
                 return self._claim_fail("返回主页")
+
+    def _story_follows(self) -> bool:
+        """After 「完成主线任务」: a story screen (not the played card's bare field)."""
+        boxes, seen = self._read_screen()
+        screen, _point = story_push.classify(boxes, seen)
+        return screen in STORY_GOES_ON
 
     def _story_screen_now(self) -> bool:
         """Two reads in a row show a story screen (talk, CG, battle, field)."""
