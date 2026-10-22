@@ -142,6 +142,10 @@ class StoryPushTask(CartridgeFieldTask):
             boxes = self._reference_boxes(self.capture_frame(), FULL_SCREEN, LABEL)
             screen, _point = story_push.classify(boxes)
             if screen == StoryScreen.UNKNOWN and not self._field_hud_shown(boxes):
+                self.log_info(
+                    f"{LABEL}：开始时不在剧情画面，读到 "
+                    + " | ".join(f"{box.name}@{box.x + box.width / 2:.0f},{box.y + box.height / 2:.0f}" for box in boxes)
+                )
                 return False
         return True
 
