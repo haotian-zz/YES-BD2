@@ -16,6 +16,7 @@ test rule 「长时间无法推进时停下来一起分析原因」.
 
 from __future__ import annotations
 
+from collections import deque
 from time import monotonic
 
 import cv2
@@ -54,6 +55,8 @@ PRESET_LOOKS = 3
 NO_PROGRESS_KEY = "无进展停止分钟"
 MAX_MINUTES_KEY = "最长运行分钟"
 NO_PROGRESS_MINUTES = 5
+# A screen seen among the last this many (same goal) is no progress.
+RECENT_SCREENS = 4
 MAX_MINUTES = 180
 # Quest-row presses on one goal without the walk starting before E is tried,
 # and E presses after that before the run stops.
@@ -432,6 +435,7 @@ class StoryPushTask(CartridgeFieldTask):
         no_progress = 60 * max(1, int(self.config.get(NO_PROGRESS_KEY, NO_PROGRESS_MINUTES)))
         last_kind, last_goal = None, ""
         progressed_at = monotonic()
+        recent_kinds: deque[StoryScreen] = deque(maxlen=RECENT_SCREENS)
         quest_presses = key_presses = toggle_presses = skip_presses = defeats = 0
         preset_pending = False
         interact_detours = 0
@@ -451,8 +455,15 @@ class StoryPushTask(CartridgeFieldTask):
             goal = story_push.quest_goal_text(boxes)
             new_goal = bool(goal) and not story_push.same_goal(goal, last_goal)
             if screen != last_kind or new_goal:
-                progressed_at = now
+                if new_goal:
+                    recent_kinds.clear()
+                # Two screens in turn (a bystander's F button and its close-up,
+                # card 18 live 2026-10-22) are not progress; a battle (re)started
+                # is, losses being counted on their own.
+                if new_goal or screen not in recent_kinds or screen == StoryScreen.BATTLE_AUTO:
+                    progressed_at = now
                 if screen != last_kind:
+                    recent_kinds.append(screen)
                     self.log_info(f"{LABEL}：画面 {screen.value}")
                 if new_goal:
                     self.log_info(f"{LABEL}：主线目标「{goal}」。")

@@ -140,6 +140,9 @@ WALKING_TEXTS = ("自动移动中", "自動移動中")
 # ✕ under the walking banner stops the walk.
 WALK_CANCEL_POINT = (960, 985)
 QUEST_TEXTS = ("主线", "主線")
+# A step done, its row reads 「完成」 over the way back (「返回艾达与拉德尔所…」,
+# card 18 live 2026-10-22); read whole, a goal line can hold the word.
+QUEST_DONE_TEXT = "完成"
 QUEST_ROI = (1500, 100, 1920, 260)
 QUEST_KEY = "E"
 # The quest row's goal sits one line under 「主线」.
@@ -290,6 +293,11 @@ def _exact(boxes, word: str, roi):
     return None
 
 
+def _quest_header(boxes):
+    """The quest row's 「主线」 (or 「完成」) title, None when unread."""
+    return _find(boxes, QUEST_TEXTS, QUEST_ROI) or _exact(boxes, normalize_ocr_text(QUEST_DONE_TEXT), QUEST_ROI)
+
+
 def quest_goal_point(box) -> tuple[int, int]:
     x, y = _centre(box)
     return round(x + QUEST_GOAL_OFFSET[0]), round(y + QUEST_GOAL_OFFSET[1])
@@ -362,7 +370,7 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
         return StoryScreen.WALKING, None
     if seen.get("interact") or _exact(boxes, INTERACT_LABEL, INTERACT_LABEL_ROI):
         return StoryScreen.INTERACT, INTERACT_POINT
-    quest = _find(boxes, QUEST_TEXTS, QUEST_ROI)
+    quest = _quest_header(boxes)
     if quest is not None:
         return StoryScreen.QUEST, quest_goal_point(quest)
     words = [box for box in boxes if len(_norm(box)) >= 2]
@@ -378,7 +386,7 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
 
 def quest_goal_text(boxes) -> str:
     """The goal line under 「主线」 (e.g. 「前往通道另一侧」), '' when unread."""
-    quest = _find(boxes, QUEST_TEXTS, QUEST_ROI)
+    quest = _quest_header(boxes)
     if quest is None:
         return ""
     _x, y = _centre(quest)
@@ -409,5 +417,5 @@ def unlock_notice(boxes) -> bool:
 
 def quest_point(boxes) -> tuple[int, int] | None:
     """The quest row's goal line to press, None when the row is unread."""
-    quest = _find(boxes, QUEST_TEXTS, QUEST_ROI)
+    quest = _quest_header(boxes)
     return None if quest is None else quest_goal_point(quest)

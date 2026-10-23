@@ -33,6 +33,14 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(StoryScreen.QUEST, screen)
         self.assertEqual((1655, 163), point)
 
+    def test_a_done_step_row_reads_like_the_quest_row(self):
+        # card 18 live 2026-10-22: 「完成」 over 「返回艾达与拉德尔所…」, a child's
+        # thought bubble nearby (F) pressed for a minute instead.
+        boxes = FIELD_HUD + [_box("完成", 1608, 135), _box("+", 1824, 150, 20), _box("返回艾达与拉德尔所", 1678, 164, 200)]
+        self.assertEqual((StoryScreen.QUEST, (1638, 160)), story_push.classify(boxes))
+        self.assertEqual((1638, 160), story_push.quest_point(boxes + [_box("F", 1410, 940, 20)]))
+        self.assertEqual("返回艾达与拉德尔所", story_push.quest_goal_text(boxes))
+
     def test_walking_banner_waits(self):
         screen, point = story_push.classify(
             FIELD_HUD + [_box("主线", 1625, 138), _box("自动移动中：主线任务", 960, 912, 220)]

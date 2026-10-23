@@ -1,6 +1,9 @@
+import itertools
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
+from src.tasks import StoryPushTask as story_push_task
 from src.tasks.StoryPushTask import StoryPushTask
 
 
@@ -42,6 +45,21 @@ class StoryPushLoginTest(unittest.TestCase):
         task = self._task([(False, True)], login)
         self.assertFalse(task._open_collection())
         self.assertIn("自动登录没开", task._why)
+
+
+class StoryPushProgressTest(unittest.TestCase):
+    def test_two_screens_in_turn_stop_as_no_progress(self):
+        # card 18 live 2026-10-22: a bystander's F button and its close-up, in turn.
+        task = object.__new__(StoryPushTask)
+        task.config = {}
+        task.info_set = task.log_info = task.log_warning = lambda *_args, **_kwargs: None
+        task.sleep = task.tap_key = task._click_reference = lambda *_args, **_kwargs: None
+        looks = itertools.cycle([{"interact": True}, {"npc_focus": True}])
+        task._read_screen = lambda: ([], next(looks))
+        clock = itertools.count(0, 10)
+        with patch.object(story_push_task, "monotonic", lambda: next(clock)):
+            why = task._push(deadline=10**9)
+        self.assertIn("分钟没有推进", why)
 
 
 if __name__ == "__main__":
