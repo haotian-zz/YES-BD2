@@ -242,6 +242,17 @@ class StoryPushTask(CartridgeFieldTask):
                 return True
         return super().clear_temporary_home_announcement_if_needed(**signals)
 
+    def _leave_defeat(self, boxes) -> None:
+        """「返回」 out of the defeat screen (no dialog; it goes on with the
+        story's talk), pressed again while the screen still animates in."""
+        for _look in range(PRESET_LOOKS):
+            self.sleep(DEFEAT_SETTLE_SECONDS)
+            self._click_reference(*story_push.defeat_back_point(boxes), after_sleep=2.0)  # 不用确认：下面重看战败画面还在不在
+            boxes, seen = self._read_screen()
+            if story_push.classify(boxes, seen)[0] != StoryScreen.BATTLE_DEFEAT:
+                return
+        self.log_warning(f"{LABEL}：战败画面的「返回」没点掉。")
+
     def _apply_preset(self, boxes, number: int) -> bool:
         """「预设」 → row ``number``'s 「使用」 → 确认, back on the battle's first turn."""
         self.log_info(f"{LABEL}：重新挑战前套用第 {number} 个阵形预设。")
@@ -492,7 +503,7 @@ class StoryPushTask(CartridgeFieldTask):
                 defeats += 1
                 self.log_warning(f"{LABEL}：战斗失败（第 {defeats} 次）。")
                 if defeats >= DEFEATS_MAX:
-                    self._click_reference(*story_push.defeat_back_point(boxes), after_sleep=2.0)  # 不用确认：停止前离开战斗
+                    self._leave_defeat(boxes)
                     return f"编队打输了 {defeats} 次，请先加强编队或换一个阵形预设"
                 preset_pending = int(self.config.get(PRESET_KEY, 1) or 0) > 0
                 self.log_info(f"{LABEL}：重新挑战。")
