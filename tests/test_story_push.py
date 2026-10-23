@@ -97,6 +97,23 @@ class ClassifyTest(unittest.TestCase):
                            _box("从最初开始", 1169, 686, 100)]
         self.assertEqual((StoryScreen.RETRY_CONFIRM, (1169, 686)), story_push.classify(confirm))
 
+    def test_preset_is_used_and_confirmed(self):
+        ready = [_box("TURN.1", 1663, 985), _box("BATTLE", 1772, 985), _box("更换", 122, 1002),
+                 _box("预设", 422, 1002), _box("推荐部署", 522, 1002, 100)]
+        self.assertEqual((422, 1002), story_push.preset_button_point(ready))
+        self.assertIsNone(story_push.preset_use_point(ready))
+        panel = ready + [_box("全部删除", 445, 275, 100), _box("阵形预设", 960, 276, 100),
+                         _box("无名称", 491, 350), _box("删除", 1229, 476), _box("使用", 1356, 476),
+                         _box("覆盖", 1481, 476), _box("删除", 1229, 691), _box("使用", 1355, 692),
+                         _box("覆盖", 1481, 692), _box("最近使用阵形", 1260, 812, 120)]
+        self.assertEqual((1356, 476), story_push.preset_use_point(panel))
+        self.assertEqual((1355, 692), story_push.preset_use_point(panel, 2))
+        self.assertIsNone(story_push.preset_use_point(panel, 3))
+        confirm = [_box("使用预设", 453, 273, 100), _box("是否使用无名称预设？使用预设时，装备也将一同", 1282, 711, 400),
+                   _box("取消", 1178, 812), _box("确认", 1388, 811)]
+        self.assertEqual((1388, 811), story_push.preset_confirm_point(confirm))
+        self.assertIsNone(story_push.preset_confirm_point(panel))
+
     def test_arrival_at_a_person_presses_the_interaction_button(self):
         screen, point = story_push.classify(
             FIELD_HUD + [_box("主线", 1625, 138), _box("与拉德尔对话", 1640, 165, 120),

@@ -45,6 +45,12 @@ FULL_SCREEN = (0, 0, REFERENCE_WIDTH, REFERENCE_HEIGHT)
 
 LABEL = "主线推图"
 CONTINUE_KEY = "持续推进"
+# The user (2026-10-22): the formation (and the order its characters act in)
+# drifted after a while and battles were lost.  It carries over between
+# battles, so a preset is used only for the 重新挑战 after a loss: 「先默认第一个」,
+# and the number can be set.
+PRESET_KEY = "战败重试时套用的预设"
+PRESET_LOOKS = 3
 NO_PROGRESS_KEY = "无进展停止分钟"
 MAX_MINUTES_KEY = "最长运行分钟"
 NO_PROGRESS_MINUTES = 5
@@ -108,14 +114,19 @@ class StoryPushTask(CartridgeFieldTask):
         self.name = LABEL
         self.description = (
             "主页卡带 → 游戏卡珍藏集 → 第一张进度条没满的剧情游戏卡 → 点右上角主线自动移动，"
-            "剧情跳过、战斗用默认编队自动战斗，一直推到这张卡打完。"
+            "剧情跳过、战斗用当前编队自动战斗（输了套用阵形预设再重新挑战），一直推到这张卡打完。"
         )
         self.icon = FluentIcon.PLAY
         self.group_name = "推图"
         self.default_config[CONTINUE_KEY] = True
+        self.default_config[PRESET_KEY] = 1
         self.default_config[NO_PROGRESS_KEY] = NO_PROGRESS_MINUTES
         self.default_config[MAX_MINUTES_KEY] = MAX_MINUTES
         self.config_description[CONTINUE_KEY] = "一张剧情游戏卡打完后，接着推下一张没打完的。"
+        self.config_description[PRESET_KEY] = (
+            "战斗输了重新挑战时，先点「预设」套用阵形预设里第几个编队（连同装备，从上往下数，"
+            "只认面板上不用滚动就看得到的）；0 表示不套用。"
+        )
         self.config_description[NO_PROGRESS_KEY] = (
             "这么多分钟画面一直没有推进（例如解谜关、默认编队打不过）就停下，并说明停在哪里。"
         )
@@ -231,6 +242,34 @@ class StoryPushTask(CartridgeFieldTask):
                 return True
         return super().clear_temporary_home_announcement_if_needed(**signals)
 
+    def _apply_preset(self, boxes, number: int) -> bool:
+        """「预设」 → row ``number``'s 「使用」 → 确认, back on the battle's first turn."""
+        self.log_info(f"{LABEL}：重新挑战前套用第 {number} 个阵形预设。")
+        self._click_reference(*story_push.preset_button_point(boxes), after_sleep=1.5)  # 不用确认：下面重看阵形预设面板
+        use_point = None
+        for _look in range(PRESET_LOOKS):
+            panel = self._reference_boxes(self.capture_frame(), FULL_SCREEN, LABEL)
+            use_point = story_push.preset_use_point(panel, number)
+            if use_point is not None or story_push.preset_panel_shown(panel):
+                break
+            self.sleep(POLL_SECONDS)
+        if use_point is None:
+            self.log_warning(f"{LABEL}：阵形预设面板上没找到第 {number} 个预设，按当前编队开打。")
+            if story_push.preset_panel_shown(panel):
+                self._click_reference(*story_push.PRESET_PANEL_CLOSE_POINT, after_sleep=1.0)  # 不用确认：推图循环下一轮重看画面
+            return False
+        self._click_reference(*use_point, after_sleep=1.5)  # 不用确认：下面重看「使用预设」确认框
+        for _look in range(PRESET_LOOKS):
+            confirm = story_push.preset_confirm_point(
+                self._reference_boxes(self.capture_frame(), FULL_SCREEN, LABEL)
+            )
+            if confirm is not None:
+                self._click_reference(*confirm, after_sleep=2.0)  # 不用确认：推图循环下一轮重看战斗准备画面
+                return True
+            self.sleep(POLL_SECONDS)
+        self.log_warning(f"{LABEL}：没等到「使用预设」确认框，按当前编队开打。")
+        return False
+
     def _story_screen_now(self) -> bool:
         """Two reads in a row show a story screen (talk, CG, battle, field)."""
         for look in range(2):
@@ -337,6 +376,7 @@ class StoryPushTask(CartridgeFieldTask):
         last_kind, last_goal = None, ""
         progressed_at = monotonic()
         quest_presses = key_presses = toggle_presses = skip_presses = defeats = 0
+        preset_pending = False
         interact_detours = 0
         walking_since = None
         field_only_since = None
@@ -411,6 +451,9 @@ class StoryPushTask(CartridgeFieldTask):
                     self._click_reference(*goal_point, after_sleep=1.5)  # 不用确认：推图循环下一轮看是否又在移动
                 else:
                     self.sleep(POLL_SECONDS)
+            elif screen == StoryScreen.BATTLE_READY and preset_pending:
+                preset_pending = False
+                self._apply_preset(boxes, int(self.config.get(PRESET_KEY, 1) or 0))
             elif screen == StoryScreen.BATTLE_READY:
                 toggle_presses += 1
                 if toggle_presses <= AUTO_TOGGLE_PRESSES:
@@ -443,7 +486,8 @@ class StoryPushTask(CartridgeFieldTask):
                 self.log_warning(f"{LABEL}：战斗失败（第 {defeats} 次）。")
                 if defeats >= DEFEATS_MAX:
                     self._click_reference(*story_push.defeat_back_point(boxes), after_sleep=2.0)  # 不用确认：停止前离开战斗
-                    return f"默认编队打输了 {defeats} 次，请先加强编队"
+                    return f"编队打输了 {defeats} 次，请先加强编队或换一个阵形预设"
+                preset_pending = int(self.config.get(PRESET_KEY, 1) or 0) > 0
                 self.log_info(f"{LABEL}：重新挑战。")
                 self.sleep(DEFEAT_SETTLE_SECONDS)
                 self._click_reference(*point, after_sleep=3.0)  # 不用确认：推图循环下一轮重看画面
@@ -453,7 +497,7 @@ class StoryPushTask(CartridgeFieldTask):
                     self.log_warning(f"{LABEL}：战斗失败（第 {defeats} 次）。")
                     if defeats >= DEFEATS_MAX:
                         self._click_reference(*point, after_sleep=2.0)  # 不用确认：停止前离开结算
-                        return f"默认编队打输了 {defeats} 次，请先加强编队"
+                        return f"编队打输了 {defeats} 次，请先加强编队或换一个阵形预设"
                 self._click_reference(*point, after_sleep=2.0)  # 不用确认：推图循环下一轮重看画面
             elif screen == StoryScreen.RETRY_CONFIRM:
                 self.log_info(f"{LABEL}：重新挑战，从最初开始。")

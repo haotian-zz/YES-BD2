@@ -110,6 +110,17 @@ DEFEAT_BACK_POINT = (778, 993)
 # 「重新挑战」 asks first: 「取消 / 从上一回合开始 / 从最初开始」 (live
 # 2026-10-22); the battle is played again from its start.
 RETRY_FROM_START_TEXTS = ("从最初开始", "從最初開始")
+# The battle's 「预设」 button (bottom bar: 更换 / 更换顺序 / 查看使用顺序 / 预设
+# / 推荐部署) opens 「阵形预设」, one row per preset with 「删除 / 使用 / 覆盖」
+# on its right; 「使用」 asks 「使用预设 … 是否使用无名称预设？使用预设时，装备也将
+# 一同更换。」 with 取消 / 确认, which closes it all (live 2026-10-22).
+PRESET_BUTTON_TEXTS = ("预设", "預設")
+PRESET_BUTTON_ROI = (300, 960, 560, 1050)
+PRESET_BUTTON_POINT = (422, 1000)
+PRESET_PANEL_TITLES = ("阵形预设", "陣形預設")
+PRESET_USE_TEXTS = ("使用",)
+PRESET_CONFIRM_TITLES = ("使用预设", "使用預設")
+PRESET_PANEL_CLOSE_POINT = (1550, 249)
 # 「结束自动战斗」 bottom right / 「自动战斗中」 bottom left.
 RESULT_LEAVE_ROI = (1300, 900, 1920, 1080)
 BATTLE_BUTTON_TEXT = "battle"
@@ -223,6 +234,41 @@ def _find(boxes, words, roi=None):
         if any(word and word in text for word in wanted) and (roi is None or _inside(box, roi)):
             return box
     return None
+
+
+def preset_button_point(boxes) -> tuple[int, int]:
+    button = _find(boxes, PRESET_BUTTON_TEXTS, PRESET_BUTTON_ROI)
+    if button is None:
+        return PRESET_BUTTON_POINT
+    x, y = _centre(button)
+    return round(x), round(y)
+
+
+def preset_panel_shown(boxes) -> bool:
+    return _find(boxes, PRESET_PANEL_TITLES) is not None
+
+
+def preset_use_point(boxes, number: int = 1) -> tuple[int, int] | None:
+    """「使用」 of preset row ``number`` (1 = top) on the 「阵形预设」 panel;
+    only the rows on screen count."""
+    if not preset_panel_shown(boxes) or number < 1:
+        return None
+    wanted = {normalize_ocr_text(word) for word in PRESET_USE_TEXTS}
+    uses = sorted((box for box in boxes if _norm(box) in wanted), key=lambda box: box.y)
+    if len(uses) < number:
+        return None
+    x, y = _centre(uses[number - 1])
+    return round(x), round(y)
+
+
+def preset_confirm_point(boxes) -> tuple[int, int] | None:
+    if _find(boxes, PRESET_CONFIRM_TITLES) is None:
+        return None
+    confirm = _find(boxes, CONFIRM_TEXTS)
+    if confirm is None:
+        return None
+    x, y = _centre(confirm)
+    return round(x), round(y)
 
 
 def defeat_back_point(boxes) -> tuple[int, int]:
