@@ -81,7 +81,16 @@ class StoryPushDifficultyTest(unittest.TestCase):
         task._back_home_from_collection = lambda: task.steps.append("collection home") or True
         task._enter_unfinished_story_card = lambda: task.steps.append("unfinished") or "playing card"
         banners = iter(banner_cards)
-        task._enter_difficulty_card = lambda: task.steps.append("banner") or next(banners)
+        task.skips = []
+
+        def enter_difficulty_card(skip=()):
+            task.steps.append("banner")
+            task.skips.append(list(skip))
+            card = next(banners)
+            task._difficulty_pick = None if card == "none" else (0, (100, 200))
+            return card
+
+        task._enter_difficulty_card = enter_difficulty_card
         task._after_clear = lambda: None
         return task
 
@@ -98,6 +107,14 @@ class StoryPushDifficultyTest(unittest.TestCase):
         task._claim_fail = lambda label: task.steps.append(f"fail {label}") or False
         self.assertFalse(task.run_claim())
         self.assertEqual(["home", "banner", "why 编队打输了", "fail 推图"], task.steps)
+
+    def test_the_lost_banner_card_is_passed_over_on_the_next_pick(self):
+        task = self._task(["编队打输了 3 次，请先加强编队或换一个阵形预设", "replay"], ["card 16", "card 13", "none"])
+        task._story_screen_now = lambda: False
+        task._enter_unfinished_story_card = lambda: "none"
+        task.log_warning = lambda *_args, **_kwargs: None
+        self.assertTrue(task.run_claim())
+        self.assertEqual([[], [(0, (100, 200))], [(0, (100, 200))]], task.skips)
 
     def test_replay_goal_is_read_from_the_quest_row(self):
         from src.utils import story_push

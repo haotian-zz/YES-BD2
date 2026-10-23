@@ -165,6 +165,9 @@ class StoryPushTask(CartridgeFieldTask):
         # yellow), so the next pick looks at the difficulty banners only.
         banners_only = False
         lost_cards: list[str] = []
+        # (page, point) of each lost banner card, passed over on later picks.
+        lost_picks: list[tuple[int, tuple[int, int]]] = []
+        self._difficulty_pick = None
         inside = self._story_screen_now()
         while True:
             if inside:
@@ -178,7 +181,7 @@ class StoryPushTask(CartridgeFieldTask):
                     return self._claim_fail("打开游戏卡珍藏集")
                 card = "none" if banners_only else self._enter_unfinished_story_card()
                 if card == "none" and self.config.get(DIFFICULTY_KEY, True):
-                    card = self._enter_difficulty_card()
+                    card = self._enter_difficulty_card(lost_picks)
                 if card is None:
                     return self._claim_fail("进入剧情游戏卡")
                 if card == "none":
@@ -204,6 +207,8 @@ class StoryPushTask(CartridgeFieldTask):
                 and len(lost_cards) + 1 < DIFFICULTY_DEFEATS_MAX
             ):
                 lost_cards.append(card)
+                if self._difficulty_pick is not None:
+                    lost_picks.append(self._difficulty_pick)
                 self.log_warning(f"{LABEL}：{card}{outcome}；先换下一张标着困难/极难的卡。")
                 if not self._field_to_home():
                     return self._claim_fail("返回主页")
@@ -421,19 +426,22 @@ class StoryPushTask(CartridgeFieldTask):
         self._save_flow_diagnostic("story_cards_all_full")
         return "none"
 
-    def _enter_difficulty_card(self) -> str | None:
+    def _enter_difficulty_card(self, skip=()) -> str | None:
         """Enter the first card under a 「可进行困难难度 / 极难难度」 banner,
-        looking down the page; "none" when no banner shows."""
+        looking down the page and passing over the (page, point) picks in
+        ``skip``; "none" when no such banner shows."""
+        self._difficulty_pick = None
         if story_cards.rewards_switch_on(self._reference_frame()):
             self.log_info(f"{LABEL}：关掉「查看战场奖励」，不然看不到难度标签。")
             self._click_reference(*story_cards.REWARDS_SWITCH_POINT, after_sleep=1.0)  # 不用确认：下面读标签，读不到就当没有
         self.scroll_client((0.5, 0.55), PAGE_SCROLL_UP_NOTCHES, count=1, after_sleep=1.0)
         previous = None
-        for _page in range(DIFFICULTY_PAGES):
+        for page in range(DIFFICULTY_PAGES):
             boxes = self._reference_boxes(self.capture_frame(), None, "珍藏集难度标签")
-            found = story_cards.difficulty_card(boxes)
+            found = story_cards.difficulty_card(boxes, [point for at, point in skip if at == page])
             if found is not None:
                 text, point = found
+                self._difficulty_pick = (page, point)
                 self.log_info(f"{LABEL}：进入标着「{text}」的游戏卡。")
                 self._click_reference(*point, after_sleep=2.0)  # 不用确认：推图循环接着看画面
                 return f"标着「{text}」的游戏卡"

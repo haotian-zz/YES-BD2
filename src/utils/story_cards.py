@@ -146,6 +146,8 @@ def row_header(boxes, titles):
 # centre is about 100 px above the banner, at the same x.
 DIFFICULTY_BANNER_TEXTS = ("可进行困难难度", "可进行极难难度", "可進行困難難度", "可進行極難難度")
 DIFFICULTY_BANNER_TO_CARD = -100
+# Same card on a re-read page: its point moves by a few pixels only.
+SKIP_NEAR = 80
 # 「查看战场奖励」 top right swaps the banners for reward icons.  Its switch
 # is gold on the left while on (BGR ~(62,142,182)) and a white knob there
 # while off (~(210,218,222)), live 2026-10-23.
@@ -154,21 +156,22 @@ REWARDS_SWITCH_POINT = (1715, 50)
 REWARDS_SWITCH_GOLD = 70  # red minus blue
 
 
-def difficulty_card(boxes):
+def difficulty_card(boxes, skip=()):
     """(banner text, card click point) of the top-left card with a difficulty
-    banner, or None."""
+    banner, or None; cards whose point lies near one in ``skip`` (lost there
+    before) are passed over."""
     wanted = [normalize_ocr_text(text) for text in DIFFICULTY_BANNER_TEXTS]
     banners = []
     for box in boxes or ():
         text = normalize_ocr_text(getattr(box, "name", ""))
         if any(word in text for word in wanted):
             banners.append(box)
-    if not banners:
-        return None
-    box = min(banners, key=lambda b: (round(b.y / 100), b.x))
-    x = box.x + box.width / 2
-    y = box.y + box.height / 2 + DIFFICULTY_BANNER_TO_CARD
-    return str(box.name), (round(x), round(y))
+    for box in sorted(banners, key=lambda b: (round(b.y / 100), b.x)):
+        x = round(box.x + box.width / 2)
+        y = round(box.y + box.height / 2 + DIFFICULTY_BANNER_TO_CARD)
+        if not any(abs(x - sx) < SKIP_NEAR and abs(y - sy) < SKIP_NEAR for sx, sy in skip):
+            return str(box.name), (x, y)
+    return None
 
 
 def rewards_switch_on(frame_1080: np.ndarray) -> bool:

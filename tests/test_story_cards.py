@@ -40,6 +40,11 @@ class DifficultyBannerTest(unittest.TestCase):
     def test_traditional_and_very_hard_banners_count(self):
         self.assertEqual("可進行極難難度", story_cards.difficulty_card([_box("可進行極難難度", 500, 600)])[0])
 
+    def test_a_lost_card_is_passed_over(self):
+        boxes = [_box("可进行困难难度", 290, 270, 140), _box("可进行极难难度", 1095, 270, 140)]
+        self.assertEqual(("可进行极难难度", (1095, 170)), story_cards.difficulty_card(boxes, [(292, 168)]))
+        self.assertIsNone(story_cards.difficulty_card(boxes, [(292, 168), (1095, 170)]))
+
     def test_no_banner(self):
         self.assertIsNone(story_cards.difficulty_card([_box("剧情游戏卡20／20", 248, 330)]))
 
