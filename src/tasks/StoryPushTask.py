@@ -259,15 +259,22 @@ class StoryPushTask(CartridgeFieldTask):
                 self._click_reference(*story_push.PRESET_PANEL_CLOSE_POINT, after_sleep=1.0)  # 不用确认：推图循环下一轮重看画面
             return False
         self._click_reference(*use_point, after_sleep=1.5)  # 不用确认：下面重看「使用预设」确认框
-        for _look in range(PRESET_LOOKS):
-            confirm = story_push.preset_confirm_point(
-                self._reference_boxes(self.capture_frame(), FULL_SCREEN, LABEL)
-            )
-            if confirm is not None:
-                self._click_reference(*confirm, after_sleep=2.0)  # 不用确认：推图循环下一轮重看战斗准备画面
+        # 确认 does nothing while the dialog still slides in (live 2026-10-22):
+        # pressed until the dialog is gone.
+        pressed = False
+        for _look in range(PRESET_LOOKS * 2):
+            now = self._reference_boxes(self.capture_frame(), FULL_SCREEN, LABEL)
+            confirm = story_push.preset_confirm_point(now)
+            if confirm is None and pressed:
                 return True
-            self.sleep(POLL_SECONDS)
-        self.log_warning(f"{LABEL}：没等到「使用预设」确认框，按当前编队开打。")
+            if confirm is not None:
+                pressed = True
+                self._click_reference(*confirm, after_sleep=2.0)  # 不用确认：下一轮重看确认框还在不在
+            elif story_push.preset_panel_shown(now):
+                self._click_reference(*use_point, after_sleep=1.5)  # 不用确认：下一轮重看确认框出没出来
+            else:
+                self.sleep(POLL_SECONDS)
+        self.log_warning(f"{LABEL}：「使用预设」确认框没点掉，按当前编队开打。")
         return False
 
     def _story_screen_now(self) -> bool:
@@ -503,6 +510,7 @@ class StoryPushTask(CartridgeFieldTask):
                 self.log_info(f"{LABEL}：重新挑战，从最初开始。")
                 self._click_reference(*point, after_sleep=3.0)  # 不用确认：推图循环下一轮重看画面
             elif screen in (
+                StoryScreen.PRESET_CONFIRM,
                 StoryScreen.INSERT,
                 StoryScreen.CHOICE,
                 StoryScreen.SKIP_CONFIRM,

@@ -47,6 +47,7 @@ class StoryScreen(str, Enum):
     BATTLE_RESULT = "battle_result"
     BATTLE_DEFEAT = "battle_defeat"
     RETRY_CONFIRM = "retry_confirm"
+    PRESET_CONFIRM = "preset_confirm"
     BATTLE_READY = "battle_ready"
     NPC_FOCUS = "npc_focus"
     INTERACT = "interact"
@@ -320,6 +321,9 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
             return StoryScreen.DIALOG, (round(x), round(y))
     if _find(boxes, AUTO_TEXTS):
         return StoryScreen.BATTLE_AUTO, None
+    preset_confirm = preset_confirm_point(boxes)
+    if preset_confirm is not None:
+        return StoryScreen.PRESET_CONFIRM, preset_confirm
     from_start = _find(boxes, RETRY_FROM_START_TEXTS)
     if from_start is not None:
         x, y = _centre(from_start)

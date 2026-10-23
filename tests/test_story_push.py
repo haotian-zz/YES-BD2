@@ -112,6 +112,7 @@ class ClassifyTest(unittest.TestCase):
         confirm = [_box("使用预设", 453, 273, 100), _box("是否使用无名称预设？使用预设时，装备也将一同", 1282, 711, 400),
                    _box("取消", 1178, 812), _box("确认", 1388, 811)]
         self.assertEqual((1388, 811), story_push.preset_confirm_point(confirm))
+        self.assertEqual((StoryScreen.PRESET_CONFIRM, (1388, 811)), story_push.classify(confirm))
         self.assertIsNone(story_push.preset_confirm_point(panel))
 
     def test_arrival_at_a_person_presses_the_interaction_button(self):
