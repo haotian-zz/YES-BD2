@@ -47,6 +47,16 @@ class StoryPushLoginTest(unittest.TestCase):
         self.assertIn("自动登录没开", task._why)
 
 
+class StoryPushStartScreenTest(unittest.TestCase):
+    def test_started_on_the_card_collection_is_not_inside_a_card(self):
+        task = object.__new__(StoryPushTask)
+        task.log_info = lambda *_args, **_kwargs: None
+        task.sleep = lambda *_args: None
+        title = SimpleNamespace(name="游戏卡珍藏集", x=280, y=30, width=130, height=28)
+        task._read_screen = lambda: ([title], {})
+        self.assertFalse(task._story_screen_now())
+
+
 class StoryPushProgressTest(unittest.TestCase):
     def test_two_screens_in_turn_stop_as_no_progress(self):
         # card 18 live 2026-10-22: a bystander's F button and its close-up, in turn.

@@ -388,7 +388,16 @@ class StoryPushTask(CartridgeFieldTask):
                 self.sleep(0.8)
             boxes, seen = self._read_screen()
             screen, _point = story_push.classify(boxes, seen)
-            if screen == StoryScreen.HOME or (screen == StoryScreen.UNKNOWN and not self._field_hud_shown(boxes)):
+            # Started on 游戏卡珍藏集 (live 2026-10-23) the page read as a CG,
+            # and clicks for one went nowhere.
+            in_collection = any(
+                keyword in getattr(box, "name", "") for box in boxes for keyword in COLLECTION_TITLE_KEYWORDS
+            )
+            if (
+                in_collection
+                or screen == StoryScreen.HOME
+                or (screen == StoryScreen.UNKNOWN and not self._field_hud_shown(boxes))
+            ):
                 self.log_info(
                     f"{LABEL}：开始时不在剧情画面，读到 "
                     + " | ".join(f"{box.name}@{box.x + box.width / 2:.0f},{box.y + box.height / 2:.0f}" for box in boxes)
