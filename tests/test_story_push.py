@@ -77,6 +77,13 @@ class ClassifyTest(unittest.TestCase):
                          _box("点击画面即可返回。", 953, 988, 180), _box("自动进行", 1660, 1006, 100)]
         self.assertEqual((StoryScreen.QUICK_REWARD, story_push.QUICK_REWARD_POINT), story_push.classify(reward))
 
+    def test_replay_dialog_is_cancelled(self):
+        # card 2 after 极难 live 2026-10-23: the goal line was not read.
+        boxes = FIELD_HUD + [_box("再次挑战任务", 960, 362, 160), _box("普通难度", 960, 436, 100),
+                             _box("可以再次挑战已通关的主线任务。", 960, 505, 300),
+                             _box("取消", 832, 729), _box("同意", 1086, 729)]
+        self.assertEqual((StoryScreen.REPLAY, (832, 729)), story_push.classify(boxes))
+
     def test_walking_banner_waits(self):
         screen, point = story_push.classify(
             FIELD_HUD + [_box("主线", 1625, 138), _box("自动移动中：主线任务", 960, 912, 220)]

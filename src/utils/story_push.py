@@ -45,6 +45,7 @@ class StoryScreen(str, Enum):
     ACCEPT = "accept"
     QUICK_EXPLORE = "quick_explore"
     QUICK_REWARD = "quick_reward"
+    REPLAY = "replay"
     CHOICE = "choice"
     TALK = "talk"
     BATTLE_AUTO = "battle_auto"
@@ -173,6 +174,9 @@ QUEST_ROI = (1500, 100, 1920, 260)
 # Every difficulty played through, the goal reads 「再次挑战主线任务」, whose
 # dialog says a replay pays nothing (card 1 after 极难, live 2026-10-23).
 REPLAY_GOAL_TEXTS = ("再次挑战", "再次挑戰")
+# Its goal line is not always read (card 2 after 极难, live 2026-10-23); the
+# row then opens 「再次挑战任务 … 完成后不会发放奖励」 over 取消 / 同意.
+REPLAY_DIALOG_TITLES = ("再次挑战任务", "再次挑戰任務")
 QUEST_KEY = "E"
 # The quest row's goal sits one line under 「主线」.
 QUEST_GOAL_OFFSET = (30, 25)
@@ -353,6 +357,11 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
         if confirm is not None:
             x, y = _centre(confirm)
             return StoryScreen.SKIP_CONFIRM, (round(x), round(y))
+    if _find(boxes, REPLAY_DIALOG_TITLES):
+        cancel = _find(boxes, CANCEL_TEXTS)
+        if cancel is not None:
+            x, y = _centre(cancel)
+            return StoryScreen.REPLAY, (round(x), round(y))
     if _find(boxes, QUICK_REWARD_TEXTS):
         return StoryScreen.QUICK_REWARD, QUICK_REWARD_POINT
     if _find(boxes, QUICK_PAGE_TEXTS):

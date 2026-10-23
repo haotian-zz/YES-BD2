@@ -541,6 +541,9 @@ class StoryPushTask(CartridgeFieldTask):
 
             if goal and story_push.replay_goal(goal):
                 return "replay"
+            if screen == StoryScreen.REPLAY:
+                self._click_reference(*point, after_sleep=1.5)  # 不用确认：离开这张卡时由回主页流程接手
+                return "replay"
             if screen == StoryScreen.HOME:
                 return "home"
             if screen == StoryScreen.GUIDE:
