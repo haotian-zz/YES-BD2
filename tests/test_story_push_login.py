@@ -90,6 +90,15 @@ class StoryPushDifficultyTest(unittest.TestCase):
         self.assertTrue(task.run_claim())
         self.assertEqual(["home", "banner", "home", "banner", "collection home"], task.steps)
 
+    def test_a_lost_card_is_left_for_the_next_banner_card_once(self):
+        task = self._task(["编队打输了 3 次，请先加强编队或换一个阵形预设"] * 2, ["card 13"])
+        task.log_warning = lambda *_args, **_kwargs: None
+        task._note_why = lambda why: task.steps.append(f"why {why[:5]}")
+        task._save_flow_diagnostic = lambda _name: None
+        task._claim_fail = lambda label: task.steps.append(f"fail {label}") or False
+        self.assertFalse(task.run_claim())
+        self.assertEqual(["home", "banner", "why 编队打输了", "fail 推图"], task.steps)
+
     def test_replay_goal_is_read_from_the_quest_row(self):
         from src.utils import story_push
 

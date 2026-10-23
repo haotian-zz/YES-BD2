@@ -76,6 +76,10 @@ TALK_SKIP_PRESSES = 2
 # Lost battles in one cartridge before the run stops: 重新挑战 twice, then stop
 # (the user 2026-10-22 「重新挑战几次再停」).
 DEFEATS_MAX = 3
+DEFEAT_OUTCOME = "编队打输了"
+# A 困难 / 极难 card lost on is left for the next banner card (card 15 极难,
+# live 2026-10-23); after this many such cards the run stops.
+DIFFICULTY_DEFEATS_MAX = 2
 DEFEAT_SETTLE_SECONDS = 2.0
 DEFEAT_WORDS = ("defeat",)
 # The field HUD (SPACE / TAB under the skill wheel) with the quest row unread:
@@ -160,6 +164,7 @@ class StoryPushTask(CartridgeFieldTask):
         # A card played on every difficulty stays the one in use (its bar
         # yellow), so the next pick looks at the difficulty banners only.
         banners_only = False
+        lost_cards: list[str] = []
         inside = self._story_screen_now()
         while True:
             if inside:
@@ -188,6 +193,18 @@ class StoryPushTask(CartridgeFieldTask):
                 self.log_info(f"{LABEL}：{card}每个难度都打完了（主线目标只剩「再次挑战」，再打没有奖励）。")
                 if not (self.config.get(CONTINUE_KEY, True) and self.config.get(DIFFICULTY_KEY, True)):
                     return self._field_to_home()
+                if not self._field_to_home():
+                    return self._claim_fail("返回主页")
+                banners_only = True
+                continue
+            if (
+                outcome.startswith(DEFEAT_OUTCOME)
+                and self.config.get(CONTINUE_KEY, True)
+                and self.config.get(DIFFICULTY_KEY, True)
+                and len(lost_cards) + 1 < DIFFICULTY_DEFEATS_MAX
+            ):
+                lost_cards.append(card)
+                self.log_warning(f"{LABEL}：{card}{outcome}；先换下一张标着困难/极难的卡。")
                 if not self._field_to_home():
                     return self._claim_fail("返回主页")
                 banners_only = True
@@ -612,7 +629,7 @@ class StoryPushTask(CartridgeFieldTask):
                 self.log_warning(f"{LABEL}：战斗失败（第 {defeats} 次）。")
                 if defeats >= DEFEATS_MAX:
                     self._leave_defeat(boxes)
-                    return f"编队打输了 {defeats} 次，请先加强编队或换一个阵形预设"
+                    return f"{DEFEAT_OUTCOME} {defeats} 次，请先加强编队或换一个阵形预设"
                 preset_pending = int(self.config.get(PRESET_KEY, 1) or 0) > 0
                 self.log_info(f"{LABEL}：重新挑战。")
                 self.sleep(DEFEAT_SETTLE_SECONDS)
@@ -623,7 +640,7 @@ class StoryPushTask(CartridgeFieldTask):
                     self.log_warning(f"{LABEL}：战斗失败（第 {defeats} 次）。")
                     if defeats >= DEFEATS_MAX:
                         self._click_reference(*point, after_sleep=2.0)  # 不用确认：停止前离开结算
-                        return f"编队打输了 {defeats} 次，请先加强编队或换一个阵形预设"
+                        return f"{DEFEAT_OUTCOME} {defeats} 次，请先加强编队或换一个阵形预设"
                 self._click_reference(*point, after_sleep=2.0)  # 不用确认：推图循环下一轮重看画面
             elif screen == StoryScreen.RETRY_CONFIRM:
                 self.log_info(f"{LABEL}：重新挑战，从最初开始。")
