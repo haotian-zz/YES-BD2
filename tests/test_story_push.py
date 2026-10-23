@@ -41,6 +41,19 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual((1638, 160), story_push.quest_point(boxes + [_box("F", 1410, 940, 20)]))
         self.assertEqual("返回艾达与拉德尔所", story_push.quest_goal_text(boxes))
 
+    def test_hard_difficulty_start_presses_accept(self):
+        # card 1 live 2026-10-23: 「开始困难难度」 opened the 困难难度 box over the
+        # field HUD; it sat as unknown until stopped.
+        boxes = FIELD_HUD + [
+            _box("主线", 1625, 138),
+            _box("开始困难难度", 1640, 164, 140),
+            _box("困难难度", 960, 328, 120),
+            _box("难度仅适用于主线任务战斗。是否开始主线任务？", 960, 375, 500),
+            _box("取消", 870, 752),
+            _box("领取探索", 1047, 752, 90),
+        ]
+        self.assertEqual((StoryScreen.ACCEPT, (1047, 752)), story_push.classify(boxes))
+
     def test_walking_banner_waits(self):
         screen, point = story_push.classify(
             FIELD_HUD + [_box("主线", 1625, 138), _box("自动移动中：主线任务", 960, 912, 220)]

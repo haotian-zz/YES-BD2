@@ -42,6 +42,7 @@ class StoryScreen(str, Enum):
     INSERT = "insert"
     SKIP_CONFIRM = "skip_confirm"
     DIALOG = "dialog"
+    ACCEPT = "accept"
     CHOICE = "choice"
     TALK = "talk"
     BATTLE_AUTO = "battle_auto"
@@ -88,6 +89,11 @@ CONFIRM_TEXTS = ("确认", "確認")
 # 确认 sits at (1045, 780), or higher at (1044, 628) for a talk inside a
 # battle scene (card 16, live 2026-10-22).
 SKIP_CONFIRM_ROI = (900, 550, 1200, 850)
+# The 困难难度 goal 「开始困难难度」 opens 「难度仅适用于主线任务战斗。是否开始主线
+# 任务？」 with the clear reward (150 钻石 on card 1) over 取消 / 领取探索
+# (card 1, live 2026-10-23): 领取探索 starts the hard run.
+ACCEPT_TEXTS = ("领取探索", "領取探索")
+ACCEPT_ROI = (880, 700, 1220, 810)
 # A field dialog opened by a stray click (the 「战场角色设置」 icon sits bottom
 # centre of the field, live 2026-10-22): 取消 closes it.
 DIALOG_TITLES = ("战场角色设置", "戰場角色設置")
@@ -324,6 +330,10 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
         if confirm is not None:
             x, y = _centre(confirm)
             return StoryScreen.SKIP_CONFIRM, (round(x), round(y))
+    accept = _find(boxes, ACCEPT_TEXTS, ACCEPT_ROI)
+    if accept is not None:
+        x, y = _centre(accept)
+        return StoryScreen.ACCEPT, (round(x), round(y))
     if _find(boxes, DIALOG_TITLES):
         cancel = _find(boxes, CANCEL_TEXTS)
         if cancel is not None:

@@ -92,6 +92,7 @@ INTERACT_QUEST_FIRST = 1
 WALK_REPATH_SECONDS = 45.0
 STORY_GOES_ON = (
     StoryScreen.INSERT,
+    StoryScreen.ACCEPT,
     StoryScreen.SKIP_CONFIRM,
     StoryScreen.CHOICE,
     StoryScreen.TALK,
@@ -574,6 +575,7 @@ class StoryPushTask(CartridgeFieldTask):
                 StoryScreen.PRESET_CONFIRM,
                 StoryScreen.PRESET_PANEL,
                 StoryScreen.INSERT,
+                StoryScreen.ACCEPT,
                 StoryScreen.CHOICE,
                 StoryScreen.SKIP_CONFIRM,
                 StoryScreen.DIALOG,
