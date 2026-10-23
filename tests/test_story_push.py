@@ -61,6 +61,22 @@ class ClassifyTest(unittest.TestCase):
                  _box("呃…怎么了…？", 951, 537, 180)]
         self.assertEqual((StoryScreen.CHOICE, (951, 537)), story_push.classify(boxes))
 
+    def test_quick_exploration_offer_page_and_rewards(self):
+        # card 2 困难 live 2026-10-23
+        offer = [_box("进行快速探索", 960, 450, 180), _box("困难难度", 960, 492, 100),
+                 _box("取消", 832, 635), _box("立刻前往", 1086, 635, 90)]
+        self.assertEqual((StoryScreen.ACCEPT, (1086, 635)), story_push.classify(offer))
+        page = [_box("恶魔的傲骨-困难", 410, 50, 220), _box("当前战斗力49398", 1308, 47, 160),
+                _box("9.返回休息室", 311, 148, 140), _box("可获得奖励", 1249, 801, 120),
+                _box("前往当前探索", 252, 1006, 140)]
+        self.assertEqual((StoryScreen.QUICK_EXPLORE, (1660, 1006)),
+                         story_push.classify(page + [_box("自动进行", 1660, 1006, 100)]))
+        self.assertEqual((StoryScreen.QUICK_EXPLORE, (1658, 1004)),
+                         story_push.classify(page + [_box("战斗", 1658, 1004, 50)]))
+        reward = page + [_box("REWARD", 958, 334, 120), _box("获得1种", 959, 382, 80),
+                         _box("点击画面即可返回。", 953, 988, 180), _box("自动进行", 1660, 1006, 100)]
+        self.assertEqual((StoryScreen.QUICK_REWARD, story_push.QUICK_REWARD_POINT), story_push.classify(reward))
+
     def test_walking_banner_waits(self):
         screen, point = story_push.classify(
             FIELD_HUD + [_box("主线", 1625, 138), _box("自动移动中：主线任务", 960, 912, 220)]

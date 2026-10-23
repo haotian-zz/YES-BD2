@@ -43,6 +43,8 @@ class StoryScreen(str, Enum):
     SKIP_CONFIRM = "skip_confirm"
     DIALOG = "dialog"
     ACCEPT = "accept"
+    QUICK_EXPLORE = "quick_explore"
+    QUICK_REWARD = "quick_reward"
     CHOICE = "choice"
     TALK = "talk"
     BATTLE_AUTO = "battle_auto"
@@ -94,6 +96,20 @@ SKIP_CONFIRM_ROI = (900, 550, 1200, 850)
 # (card 1, live 2026-10-23): 领取探索 starts the hard run.
 ACCEPT_TEXTS = ("领取探索", "領取探索")
 ACCEPT_ROI = (880, 700, 1220, 810)
+# 困难 after 普通 offers 「进行快速探索」: 「完成普通难度后，可省略剧情快速进行
+# 探索。是否前往快速探索界面？」 over 取消 / 立刻前往 (card 2, live 2026-10-23).
+QUICK_OFFER_TEXTS = ("立刻前往",)
+QUICK_OFFER_ROI = (880, 580, 1250, 690)
+# The 快速探索 page (「恶魔的傲骨-困难」, steps listed left, 「前往当前探索」
+# bottom left): 「自动进行」 bottom right plays the talk steps through, then
+# reads 「战斗」 at a battle step; the battle is the story's own.
+QUICK_PAGE_TEXTS = ("前往当前探索", "前往當前探索")
+QUICK_BUTTON_TEXTS = ("自动进行", "自動進行", "战斗", "戰鬥")
+QUICK_BUTTON_ROI = (1480, 960, 1840, 1050)
+# Each step's rewards come up as 「REWARD 获得N种」 until a click anywhere
+# (「点击画面即可返回。」).
+QUICK_REWARD_TEXTS = ("点击画面即可返回", "點擊畫面即可返回")
+QUICK_REWARD_POINT = (960, 900)
 # A field dialog opened by a stray click (the 「战场角色设置」 icon sits bottom
 # centre of the field, live 2026-10-22): 取消 closes it.
 DIALOG_TITLES = ("战场角色设置", "戰場角色設置")
@@ -337,6 +353,17 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
         if confirm is not None:
             x, y = _centre(confirm)
             return StoryScreen.SKIP_CONFIRM, (round(x), round(y))
+    if _find(boxes, QUICK_REWARD_TEXTS):
+        return StoryScreen.QUICK_REWARD, QUICK_REWARD_POINT
+    if _find(boxes, QUICK_PAGE_TEXTS):
+        button = _find(boxes, QUICK_BUTTON_TEXTS, QUICK_BUTTON_ROI)
+        if button is not None:
+            x, y = _centre(button)
+            return StoryScreen.QUICK_EXPLORE, (round(x), round(y))
+    offer = _find(boxes, QUICK_OFFER_TEXTS, QUICK_OFFER_ROI)
+    if offer is not None:
+        x, y = _centre(offer)
+        return StoryScreen.ACCEPT, (round(x), round(y))
     accept = _find(boxes, ACCEPT_TEXTS, ACCEPT_ROI)
     if accept is not None:
         x, y = _centre(accept)

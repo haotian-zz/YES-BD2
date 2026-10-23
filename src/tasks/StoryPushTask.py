@@ -100,6 +100,8 @@ WALK_REPATH_SECONDS = 45.0
 STORY_GOES_ON = (
     StoryScreen.INSERT,
     StoryScreen.ACCEPT,
+    StoryScreen.QUICK_EXPLORE,
+    StoryScreen.QUICK_REWARD,
     StoryScreen.SKIP_CONFIRM,
     StoryScreen.CHOICE,
     StoryScreen.TALK,
@@ -628,6 +630,8 @@ class StoryPushTask(CartridgeFieldTask):
                 StoryScreen.PRESET_PANEL,
                 StoryScreen.INSERT,
                 StoryScreen.ACCEPT,
+                StoryScreen.QUICK_EXPLORE,
+                StoryScreen.QUICK_REWARD,
                 StoryScreen.CHOICE,
                 StoryScreen.SKIP_CONFIRM,
                 StoryScreen.DIALOG,
