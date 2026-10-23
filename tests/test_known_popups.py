@@ -47,6 +47,15 @@ class PickTest(unittest.TestCase):
         self.assertEqual(press.label, "取消")
         self.assertIs(press.box, boxes[1])
 
+    def test_stray_settings_panel_is_cancelled_mid_task(self):
+        # Live 4K clone 2026-10-23: a stray press opened 战场角色设置 over the
+        # PVP field; no task opens it, so its 取消 is safe at any step.
+        boxes = _boxes("战场角色设置", "剧情角色阵形", "取消", "确认")
+        press = known_popups.pick(boxes)
+        self.assertEqual(press.label, "取消")
+        self.assertTrue(press.stray)
+        self.assertIs(press.box, boxes[2])
+
     def test_quit_words_without_cancel_or_without_game_are_not_quit(self):
         self.assertFalse(known_popups.is_quit_dialog(_boxes("是否退出游戏？", "确认")))
         self.assertFalse(known_popups.is_quit_dialog(_boxes("退出公会", "取消")))
