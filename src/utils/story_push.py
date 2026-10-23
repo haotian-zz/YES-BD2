@@ -154,6 +154,9 @@ QUEST_TEXTS = ("主线", "主線")
 # card 18 live 2026-10-22); read whole, a goal line can hold the word.
 QUEST_DONE_TEXT = "完成"
 QUEST_ROI = (1500, 100, 1920, 260)
+# Every difficulty played through, the goal reads 「再次挑战主线任务」, whose
+# dialog says a replay pays nothing (card 1 after 极难, live 2026-10-23).
+REPLAY_GOAL_TEXTS = ("再次挑战", "再次挑戰")
 QUEST_KEY = "E"
 # The quest row's goal sits one line under 「主线」.
 QUEST_GOAL_OFFSET = (30, 25)
@@ -437,3 +440,8 @@ def quest_point(boxes) -> tuple[int, int] | None:
     """The quest row's goal line to press, None when the row is unread."""
     quest = _quest_header(boxes)
     return None if quest is None else quest_goal_point(quest)
+
+
+def replay_goal(goal: str) -> bool:
+    text = normalize_ocr_text(goal or "")
+    return any(normalize_ocr_text(word) in text for word in REPLAY_GOAL_TEXTS)

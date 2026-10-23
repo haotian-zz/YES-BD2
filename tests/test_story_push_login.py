@@ -62,5 +62,40 @@ class StoryPushProgressTest(unittest.TestCase):
         self.assertIn("分钟没有推进", why)
 
 
+class StoryPushDifficultyTest(unittest.TestCase):
+    """2026-10-23: a card done on every difficulty (goal 「再次挑战」) is left,
+    then a card with a 困难 / 极难 banner is entered; none left ends the run."""
+
+    def _task(self, outcomes, banner_cards):
+        task = object.__new__(StoryPushTask)
+        task.config = {}
+        task._why = ""
+        task.log_info = task.info_set = lambda *_args, **_kwargs: None
+        task.steps = []
+        task._story_screen_now = lambda: True
+        task._close_unlock_notices = lambda: None
+        task._open_collection = lambda: True
+        results = iter(outcomes)
+        task._push = lambda _deadline: next(results)
+        task._field_to_home = lambda: task.steps.append("home") or True
+        task._back_home_from_collection = lambda: task.steps.append("collection home") or True
+        task._enter_unfinished_story_card = lambda: task.steps.append("unfinished") or "playing card"
+        banners = iter(banner_cards)
+        task._enter_difficulty_card = lambda: task.steps.append("banner") or next(banners)
+        task._after_clear = lambda: None
+        return task
+
+    def test_replay_goal_goes_to_a_banner_card_not_back_to_the_card_in_use(self):
+        task = self._task(["replay", "replay"], ["card 2", "none"])
+        self.assertTrue(task.run_claim())
+        self.assertEqual(["home", "banner", "home", "banner", "collection home"], task.steps)
+
+    def test_replay_goal_is_read_from_the_quest_row(self):
+        from src.utils import story_push
+
+        self.assertTrue(story_push.replay_goal("再次挑战主线任务"))
+        self.assertFalse(story_push.replay_goal("开始极难难度"))
+
+
 if __name__ == "__main__":
     unittest.main()

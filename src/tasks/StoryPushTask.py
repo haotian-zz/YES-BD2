@@ -54,6 +54,13 @@ PRESET_KEY = "战败重试时套用的预设"
 PRESET_LOOKS = 3
 NO_PROGRESS_KEY = "无进展停止分钟"
 MAX_MINUTES_KEY = "最长运行分钟"
+# 2026-10-23: each 困难 / 极难 first clear pays 钻石, so once no card is left
+# on 普通 the cards with a difficulty banner are played too.
+DIFFICULTY_KEY = "推困难和极难"
+# 「查看战场奖励」 off, the page is scrolled down this many notches a look
+# for the banners, at most this many looks.
+DIFFICULTY_SCROLL_NOTCHES = 3
+DIFFICULTY_PAGES = 8
 NO_PROGRESS_MINUTES = 5
 # A screen seen among the last this many (same goal) is no progress.
 RECENT_SCREENS = 4
@@ -128,6 +135,7 @@ class StoryPushTask(CartridgeFieldTask):
         self.default_config[PRESET_KEY] = 1
         self.default_config[NO_PROGRESS_KEY] = NO_PROGRESS_MINUTES
         self.default_config[MAX_MINUTES_KEY] = MAX_MINUTES
+        self.default_config[DIFFICULTY_KEY] = True
         self.config_description[CONTINUE_KEY] = "一张剧情游戏卡打完后，接着推下一张没打完的。"
         self.config_description[PRESET_KEY] = (
             "战斗输了重新挑战时，先点「预设」套用阵形预设里第几个编队（连同装备，从上往下数，"
@@ -137,12 +145,19 @@ class StoryPushTask(CartridgeFieldTask):
             "这么多分钟画面一直没有推进（例如解谜关、默认编队打不过）就停下，并说明停在哪里。"
         )
         self.config_description[MAX_MINUTES_KEY] = "整次推图最多跑这么多分钟。"
+        self.config_description[DIFFICULTY_KEY] = (
+            "普通难度都推完后，接着推标着「可进行困难难度 / 可进行极难难度」的游戏卡"
+            "（每个难度第一次通关有钻石）。"
+        )
 
     # -- entry --------------------------------------------------------------------
 
     def run_claim(self) -> bool:
         deadline = monotonic() + 60 * max(1, int(self.config.get(MAX_MINUTES_KEY, MAX_MINUTES)))
         cleared = home_returns = 0
+        # A card played on every difficulty stays the one in use (its bar
+        # yellow), so the next pick looks at the difficulty banners only.
+        banners_only = False
         inside = self._story_screen_now()
         while True:
             if inside:
@@ -154,7 +169,9 @@ class StoryPushTask(CartridgeFieldTask):
                 self._close_unlock_notices()
                 if not self._open_collection():
                     return self._claim_fail("打开游戏卡珍藏集")
-                card = self._enter_unfinished_story_card()
+                card = "none" if banners_only else self._enter_unfinished_story_card()
+                if card == "none" and self.config.get(DIFFICULTY_KEY, True):
+                    card = self._enter_difficulty_card()
                 if card is None:
                     return self._claim_fail("进入剧情游戏卡")
                 if card == "none":
@@ -165,6 +182,15 @@ class StoryPushTask(CartridgeFieldTask):
                 home_returns += 1
                 self.log_info(f"{LABEL}：推图中回到了主页，重新选卡。")
                 continue
+            if outcome == "replay":
+                self.log_info(f"{LABEL}：{card}每个难度都打完了（主线目标只剩「再次挑战」，再打没有奖励）。")
+                if not (self.config.get(CONTINUE_KEY, True) and self.config.get(DIFFICULTY_KEY, True)):
+                    return self._field_to_home()
+                if not self._field_to_home():
+                    return self._claim_fail("返回主页")
+                banners_only = True
+                continue
+            banners_only = False
             if outcome != "cleared":
                 self._note_why(outcome)
                 self._save_flow_diagnostic("story_push_stopped")
@@ -376,6 +402,30 @@ class StoryPushTask(CartridgeFieldTask):
         self._save_flow_diagnostic("story_cards_all_full")
         return "none"
 
+    def _enter_difficulty_card(self) -> str | None:
+        """Enter the first card under a 「可进行困难难度 / 极难难度」 banner,
+        looking down the page; "none" when no banner shows."""
+        if story_cards.rewards_switch_on(self._reference_frame()):
+            self.log_info(f"{LABEL}：关掉「查看战场奖励」，不然看不到难度标签。")
+            self._click_reference(*story_cards.REWARDS_SWITCH_POINT, after_sleep=1.0)  # 不用确认：下面读标签，读不到就当没有
+        self.scroll_client((0.5, 0.55), PAGE_SCROLL_UP_NOTCHES, count=1, after_sleep=1.0)
+        previous = None
+        for _page in range(DIFFICULTY_PAGES):
+            boxes = self._reference_boxes(self.capture_frame(), None, "珍藏集难度标签")
+            found = story_cards.difficulty_card(boxes)
+            if found is not None:
+                text, point = found
+                self.log_info(f"{LABEL}：进入标着「{text}」的游戏卡。")
+                self._click_reference(*point, after_sleep=2.0)  # 不用确认：推图循环接着看画面
+                return f"标着「{text}」的游戏卡"
+            names = [getattr(box, "name", "") for box in boxes]
+            if names == previous:
+                break
+            previous = names
+            self.scroll_client((0.5, 0.55), -DIFFICULTY_SCROLL_NOTCHES, count=1, after_sleep=1.0)
+        self.log_info(f"{LABEL}：游戏卡珍藏集里没有标着可进行困难/极难难度的卡。")
+        return "none"
+
     def _row_header_y(self, titles) -> float | None:
         boxes = self._reference_boxes(self.capture_frame(), None, "珍藏集行标题")
         box = story_cards.row_header(boxes, titles)
@@ -487,6 +537,8 @@ class StoryPushTask(CartridgeFieldTask):
             if screen != StoryScreen.WALKING:
                 walking_since = None
 
+            if goal and story_push.replay_goal(goal):
+                return "replay"
             if screen == StoryScreen.HOME:
                 return "home"
             if screen == StoryScreen.GUIDE:

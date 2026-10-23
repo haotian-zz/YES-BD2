@@ -138,3 +138,40 @@ def row_header(boxes, titles):
         if any(text.startswith(title) for title in wanted):
             return box
     return None
+
+
+# A card played through on one difficulty with the next one open carries a
+# red 「Ⅱ 可进行困难难度」 (or 极难) banner under its art; that difficulty's
+# first clear pays 钻石 (card 1 困难 + 极难: 1030, live 2026-10-23).  The art
+# centre is about 100 px above the banner, at the same x.
+DIFFICULTY_BANNER_TEXTS = ("可进行困难难度", "可进行极难难度", "可進行困難難度", "可進行極難難度")
+DIFFICULTY_BANNER_TO_CARD = -100
+# 「查看战场奖励」 top right swaps the banners for reward icons.  Its switch
+# is gold on the left while on (BGR ~(62,142,182)) and a white knob there
+# while off (~(210,218,222)), live 2026-10-23.
+REWARDS_SWITCH_LEFT = (1685, 44, 1715, 58)
+REWARDS_SWITCH_POINT = (1715, 50)
+REWARDS_SWITCH_GOLD = 70  # red minus blue
+
+
+def difficulty_card(boxes):
+    """(banner text, card click point) of the top-left card with a difficulty
+    banner, or None."""
+    wanted = [normalize_ocr_text(text) for text in DIFFICULTY_BANNER_TEXTS]
+    banners = []
+    for box in boxes or ():
+        text = normalize_ocr_text(getattr(box, "name", ""))
+        if any(word in text for word in wanted):
+            banners.append(box)
+    if not banners:
+        return None
+    box = min(banners, key=lambda b: (round(b.y / 100), b.x))
+    x = box.x + box.width / 2
+    y = box.y + box.height / 2 + DIFFICULTY_BANNER_TO_CARD
+    return str(box.name), (round(x), round(y))
+
+
+def rewards_switch_on(frame_1080: np.ndarray) -> bool:
+    left, top, right, bottom = REWARDS_SWITCH_LEFT
+    b, _g, r = frame_1080[top:bottom, left:right, :3].reshape(-1, 3).mean(0)
+    return float(r) - float(b) > REWARDS_SWITCH_GOLD
