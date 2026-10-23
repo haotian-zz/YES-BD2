@@ -21,7 +21,7 @@ class StoryPushLoginTest(unittest.TestCase):
             return ok
 
         task._open_page_from_home = open_page
-        task.executor = SimpleNamespace(get_task_by_class=lambda _cls: login)
+        task._executor = SimpleNamespace(get_task_by_class=lambda _cls: login)
         return task
 
     def test_title_screen_logs_in_then_opens_the_collection(self):
