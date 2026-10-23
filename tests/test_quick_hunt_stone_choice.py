@@ -77,6 +77,49 @@ class ElementTest(unittest.TestCase):
         pattern, runs, _reads = self._run("雷")
         self.assertIn("光", pattern)
 
+    def _run_locked(self, setting, locked):
+        task = object.__new__(QuickHuntTask)
+        task.config = {"快速狩猎界面等待秒数": 8.0, QUICK_HUNT_STONE_KEY: setting}
+        task.info_set = lambda *_args, **_kwargs: None
+        logs = []
+        task.log_info = lambda message, *_args, **_kwargs: logs.append(message)
+        task._quick_hunt_enter_crystal_cave = lambda: True
+        task._quick_hunt_resource_empty = lambda _resource: False
+        task._quick_hunt_stone_counts = lambda: dict(COUNTS)
+        task._quick_hunt_click_ocr = lambda *_args, **_kwargs: True
+        runs = []
+
+        def execute(_mode, stage):
+            runs.append(stage)
+            return "locked" if stage[0] in locked else "done"
+
+        task._quick_hunt_execute_current_map = execute
+        return task._quick_hunt_run_crystal_cave(), runs, logs
+
+    def test_least_skips_a_cave_never_cleared(self):
+        # bd2 会话 2026-10-22: 暗之洞穴 only offered 「难度挑战」.
+        ok, runs, _logs = self._run_locked(QUICK_HUNT_STONE_LEAST, {"光", "暗"})
+        self.assertTrue(ok)
+        self.assertEqual(["光属性圣石", "暗属性圣石", "风属性圣石"], runs)
+
+    def test_a_picked_cave_never_cleared_fails_with_a_hint(self):
+        ok, runs, logs = self._run_locked("暗", {"暗"})
+        self.assertFalse(ok)
+        self.assertEqual(["暗属性圣石"], runs)
+        self.assertIn("手动通关", logs[-1])
+
+    def test_locked_map_is_reported_by_the_dialog_opener(self):
+        task = object.__new__(QuickHuntTask)
+        task.config = {"快速狩猎界面等待秒数": 0.5}
+        task.info_set = lambda *_args, **_kwargs: None
+        task.log_info = lambda *_args, **_kwargs: None
+        task.sleep = lambda _seconds: None
+        task.capture_frame = lambda: object()
+        boxes = [SimpleNamespace(name="难度挑战", x=1600, y=970, width=200, height=40)]
+        task._quick_vision = lambda: SimpleNamespace(ocr_boxes=lambda *_a, **_k: boxes)
+        task._normalize_text = lambda text: text
+        self.assertEqual("locked", task._quick_hunt_execute_current_map("MAX", "暗属性圣石"))
+
     def test_count_read_failure_still_stops_on_least(self):
         task = object.__new__(QuickHuntTask)
         task.config = {QUICK_HUNT_STONE_KEY: QUICK_HUNT_STONE_LEAST}

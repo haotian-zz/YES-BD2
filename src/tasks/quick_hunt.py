@@ -277,6 +277,7 @@ QUICK_HUNT_ADVENTURE_MAP_PATTERNS = {
 QUICK_HUNT_CRYSTAL_POINT = (177, 449)
 # After a map pick, this long without 快速狩猎 means the pick may be lost.
 QUICK_HUNT_REOPEN_AFTER_SECONDS = 3.0
+QUICK_HUNT_LOCKED_BUTTON = "难度挑战"
 
 # 狩猎场 heads the menu's left column (label about (175, 188) at 1080p, its
 # icon above it; hunt-route-1011.jpg).
@@ -776,7 +777,7 @@ class QuickHuntFeatureMixin:
             result = self._quick_hunt_run_hunting_ground()
         else:
             result = self._quick_hunt_run_adventure(target)
-        if result in {"failed", "wrong_map"}:
+        if result in {"failed", "wrong_map", "locked"}:
             return False
         if result == "depleted" or self._quick_hunt_resource_empty("米饭"):
             self._status_set("快速狩猎米饭", "已耗尽")
@@ -886,9 +887,28 @@ class QuickHuntFeatureMixin:
             self._status_set("快速狩猎火把", "0，跳过")
             return True
 
-        element = self._quick_hunt_stone_element()
-        if element is None:
+        elements = self._quick_hunt_stone_elements()
+        if not elements:
             return False
+        for element in elements:
+            result = self._quick_hunt_run_stone_cave(element)
+            if result != "locked":
+                break
+            if len(elements) > 1:
+                self.log_info(f"快速狩猎：{element}之洞穴还没通关过，不能快速狩猎，换下一个属性。")
+        if result == "locked":
+            self.log_info(
+                f"快速狩猎：{'、'.join(elements)}之洞穴都还没通关过（按钮是「难度挑战」），"
+                "火把没打。请先在游戏里手动通关一次，或换一个圣石属性。"
+            )
+            return False
+        if result == "failed":
+            return False
+        self._status_set("快速狩猎火把", "已耗尽" if result == "depleted" else "完成")
+        return True
+
+    def _quick_hunt_run_stone_cave(self, element: str) -> str:
+        """Pick one element's cave and spend the torches there."""
         cave = [rf"{re.escape(element)}.?之?.?洞穴"]
         clicked = self._quick_hunt_click_ocr(
             cave,
@@ -897,21 +917,33 @@ class QuickHuntFeatureMixin:
             name=f"选择{element}属性洞穴",
         )
         if not clicked:
-            return False
+            return "failed"
         # bd2 会话 2026-10-22: the cave click was swallowed, the list stayed
         # and the run waited 8 s for 快速狩猎 and started over.  Picking a
         # cave spends nothing: the dialog opener presses it once more.
         self._quick_hunt_reopen = lambda: self._quick_hunt_click_ocr(
             cave, QUICK_HUNT_STONE_LIST_ROI, 1.0, name=f"再选{element}属性洞穴"
         )
-        result = self._quick_hunt_execute_current_map("MAX", f"{element}属性圣石")
-        if result == "failed":
-            return False
-        self._status_set("快速狩猎火把", "已耗尽" if result == "depleted" else "完成")
-        return True
+        return self._quick_hunt_execute_current_map("MAX", f"{element}属性圣石")
+
+    def _quick_hunt_stone_elements(self) -> list[str]:
+        """The elements to try in turn: the player's pick, or least held first.
+
+        bd2 会话 2026-10-22: 暗 was the least held, but that account had
+        never cleared 暗之洞穴, whose button reads 「难度挑战」 instead of
+        快速狩猎; 最少 then goes on to the next least held.
+        """
+        element = self._quick_hunt_stone_element()
+        if element is None:
+            return []
+        counts = getattr(self, "_quick_hunt_last_stone_counts", None)
+        if not counts:
+            return [element]
+        return sorted(QUICK_HUNT_STONE_ELEMENTS, key=counts.__getitem__)
 
     def _quick_hunt_stone_element(self) -> str | None:
         """The element the torches go to: the player's pick, or the least held."""
+        self._quick_hunt_last_stone_counts = None
         chosen = str(self.config.get(QUICK_HUNT_STONE_KEY, QUICK_HUNT_STONE_LEAST) or "")
         if chosen in QUICK_HUNT_STONE_ELEMENTS:
             # A picked element needs no count read.
@@ -923,6 +955,7 @@ class QuickHuntFeatureMixin:
         stone_counts = self._quick_hunt_stone_counts()
         if stone_counts is None:
             return None
+        self._quick_hunt_last_stone_counts = stone_counts
         element = min(QUICK_HUNT_STONE_ELEMENTS, key=stone_counts.__getitem__)
         self._status_set(
             "快速狩猎圣石数量",
@@ -1073,7 +1106,7 @@ class QuickHuntFeatureMixin:
     ) -> str:
         self._status_set("快速狩猎当前阶段", stage)
         if not self._quick_hunt_open_dialog(stage):
-            return "failed"
+            return "locked" if getattr(self, "_quick_hunt_map_locked", False) else "failed"
         if expected_map_pattern is not None:
             map_state, map_text, actual_map = self._quick_hunt_wait_map_confirmation(
                 expected_map_pattern,
@@ -1127,6 +1160,7 @@ class QuickHuntFeatureMixin:
         """
         button = f"{stage}-快速狩猎按钮"
         self._quick_hunt_dialog_last_read = None
+        self._quick_hunt_map_locked = False
         reopen = getattr(self, "_quick_hunt_reopen", None)
         self._quick_hunt_reopen = None
         ready = lambda: self._quick_hunt_button_ready(stage)  # noqa: E731
@@ -1140,6 +1174,9 @@ class QuickHuntFeatureMixin:
             else:
                 timeout = 0.0
         if timeout and not wait_for(ready, timeout, sleep=self.sleep, poll=0.4):
+            if self._quick_hunt_map_locked:
+                self.log_info(f"快速狩猎：{stage}只有「难度挑战」，这张图还没通关过。")
+                return False
             self.log_info(f"快速狩猎：未找到可点击 OCR 目标：{button}")
             return False
         outcome = self.press_and_confirm(
@@ -1169,10 +1206,12 @@ class QuickHuntFeatureMixin:
         boxes = self._quick_vision().ocr_boxes(
             frame, f"{stage}-快速狩猎按钮", relative_roi=QUICK_HUNT_BUTTON_ROI
         )
+        texts = [self._normalize_text(getattr(box, "name", "")) for box in boxes]
+        # A map never cleared shows 「难度挑战」 where 快速狩猎 would be.
+        self._quick_hunt_map_locked = any(QUICK_HUNT_LOCKED_BUTTON in text for text in texts)
         return any(
-            "快速狩猎" in self._normalize_text(getattr(box, "name", ""))
-            and self._quick_hunt_box_enabled(frame, box)
-            for box in boxes
+            "快速狩猎" in text and self._quick_hunt_box_enabled(frame, box)
+            for text, box in zip(texts, boxes)
         )
 
     def _quick_hunt_dialog_visible(self, stage: str) -> bool:

@@ -2755,6 +2755,39 @@ class PVPTaskHelperTest(unittest.TestCase):
 
         self.assertEqual([(True, True, True)] * 2, operates)
 
+    def _start_with_switch(self, switch_results, short=False):
+        task = object.__new__(PVPTask)
+        task.config = {}
+        task.info_set = lambda *_args, **_kwargs: None
+        task.log_info = lambda *_args, **_kwargs: None
+        task._stage_move_mode = lambda: "click"
+        task._click_pvp_stage_once = lambda _timeout: True
+        task._wait_for_ocr_patterns = lambda *_args, **_kwargs: (True, "自动战斗")
+        opened = []
+        task._open_auto_battle_menu = lambda: opened.append(1) or True
+        results = iter(switch_results)
+
+        def ensure():
+            task._free_cocktails_short = short
+            return next(results)
+
+        task._ensure_free_ap_enabled = ensure
+        closed = []
+        task._close_auto_battle_dialogs = lambda: closed.append(1)
+        task._save_flow_diagnostic = lambda *_args, **_kwargs: None
+        task._ensure_multiplier = lambda _multiplier: True
+        task._select_battle_count = lambda _multiplier: True
+        task._press_battle_start = lambda _multiplier: "started"
+        return PVPTask._start_auto_battle(task, 40), len(opened), len(closed)
+
+    def test_free_switch_not_taking_reopens_the_menu_once(self):
+        # bd2 会话 2026-10-22: two presses did nothing, a rerun took one.
+        self.assertEqual(("started", 2, 1), self._start_with_switch([False, True]))
+        self.assertEqual(("failed", 2, 2), self._start_with_switch([False, False]))
+
+    def test_no_free_cocktail_is_not_retried(self):
+        self.assertEqual(("free_empty", 1, 1), self._start_with_switch([False], short=True))
+
     def test_start_auto_battle_clicks_start_without_start_ocr_gate(self):
         task = object.__new__(PVPTask)
         task.config = {}

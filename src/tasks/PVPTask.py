@@ -229,6 +229,7 @@ PVP_RANK_CONFIRM_SETTLE_SECONDS = 1.5
 BATTLE_COUNT_MAX = "MAX"
 BATTLE_COUNT_OPTIONS = [BATTLE_COUNT_MAX, *(str(count) for count in range(1, 41))]
 PVP_MAX_ROUNDS = 12
+PVP_FREE_SWITCH_MENU_TRIES = 2
 # Free Blood Cocktails a day: 倍数 x 场数 never asks for more (Leo 2026-10-05:
 # 預設40倍 1場，兩個值相乘不可以超出40，不可以花到付費雞尾酒).
 FREE_COCKTAILS_PER_DAY = 40
@@ -1043,6 +1044,45 @@ class PVPTask(BaseBD2Task):
             self._save_flow_diagnostic("pvp_auto_battle_failed")
             return "failed"
 
+        # bd2 会话 2026-10-22: both presses on the free switch did nothing
+        # (yellow 0.000 throughout) and the day's PVP was dropped; a rerun a
+        # few minutes later turned it on with one press.  The switch costs
+        # nothing, so the menu is closed and opened once more before giving up.
+        for switch_try in range(PVP_FREE_SWITCH_MENU_TRIES):
+            if not self._open_auto_battle_menu():
+                return "failed"
+            self._free_cocktails_short = False
+            if self._ensure_free_ap_enabled():
+                break
+            self._close_auto_battle_dialogs()
+            if self._free_cocktails_short:
+                # No free cocktail at all: a 1x retry cannot help either.
+                return "free_empty"
+            self._save_flow_diagnostic("pvp_free_switch_unconfirmed")
+            if switch_try + 1 < PVP_FREE_SWITCH_MENU_TRIES:
+                self.log_info("镜中之战：免费鸡尾酒开关没按上，关掉自动战斗菜单重开再试一次。")
+        else:
+            return "failed"
+        if not self._ensure_multiplier(multiplier):
+            self._close_auto_battle_dialogs()
+            return "failed"
+        if not self._select_battle_count(multiplier):
+            self.info_set("当前阶段", "免费鸡尾酒核对失败，取消")
+            self._click_reference(*PVP_DIALOG_CANCEL_POINT, after_sleep=1.0)
+            if self._free_cocktails_short:
+                # Today's free cocktails are spent at this multiplier: done,
+                # not a failure (live 2026-09-29: 4 left at 18x).
+                self._close_auto_battle_dialogs()
+                return "free_short"
+            self._save_flow_diagnostic("pvp_cost_check_failed")
+            return "failed"
+
+        self.info_set("当前阶段", "点击战斗开始")
+        self.info_set("PVP 开始战斗 OCR", "跳过前置 OCR，按固定比例点击")
+        return self._press_battle_start(multiplier)
+
+    def _open_auto_battle_menu(self) -> bool:
+        """Press 自动战斗 on the pre-battle screen until its menu shows."""
         menu_roi = self._mf_roi(*PVP_AUTO_BATTLE_MENU_OCR_REFERENCE_ROI)
         # 2026-09 客户端改版把按钮热区收到图标/背板上（RPT-20260905-201103），
         # OCR 标签中心点击不再打开弹窗；先点校准图标位，未验证到弹窗再兜底
@@ -1098,30 +1138,8 @@ class PVPTask(BaseBD2Task):
         if not found_menu:
             self.log_info("镜中之战：多次点击后自动战斗菜单仍未出现。")
             self._save_flow_diagnostic("pvp_auto_battle_failed")
-            return "failed"
-
-        self._free_cocktails_short = False
-        if not self._ensure_free_ap_enabled():
-            self._close_auto_battle_dialogs()
-            # No free cocktail at all: a 1x retry cannot help either.
-            return "free_empty" if self._free_cocktails_short else "failed"
-        if not self._ensure_multiplier(multiplier):
-            self._close_auto_battle_dialogs()
-            return "failed"
-        if not self._select_battle_count(multiplier):
-            self.info_set("当前阶段", "免费鸡尾酒核对失败，取消")
-            self._click_reference(*PVP_DIALOG_CANCEL_POINT, after_sleep=1.0)
-            if self._free_cocktails_short:
-                # Today's free cocktails are spent at this multiplier: done,
-                # not a failure (live 2026-09-29: 4 left at 18x).
-                self._close_auto_battle_dialogs()
-                return "free_short"
-            self._save_flow_diagnostic("pvp_cost_check_failed")
-            return "failed"
-
-        self.info_set("当前阶段", "点击战斗开始")
-        self.info_set("PVP 开始战斗 OCR", "跳过前置 OCR，按固定比例点击")
-        return self._press_battle_start(multiplier)
+            return False
+        return True
 
     def _close_auto_battle_dialogs(self) -> None:
         """Press a read 取消 on up to two layers (倍率 setting, auto battle).

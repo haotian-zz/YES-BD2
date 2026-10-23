@@ -241,6 +241,58 @@ class RecordTest(unittest.TestCase):
         self.assertEqual("地图采集：Q_sp6主城探查技能操作失败：未确认采集技能栏", problem["note"])
         self.assertTrue(Path(record["frame_path"]).is_file())
 
+    def test_a_failed_phase_keeps_its_own_reason_over_later_lines(self):
+        # bd2 会话 2026-10-22: 料理 failed, the reason given was 卖's last line.
+        import logging
+
+        from src.tasks.map_trade.models import NavigationResult, ScreenState
+        from src.tasks.MapTradeTask import MapAutomationTaskBase
+
+        problem_report.install_log_ring()
+        log = logging.getLogger("ok")
+
+        class TradeTask(Task):
+            task_log_name = "跑商"
+            diagnostic_prefix = "map_trade"
+            _run_phases = MapAutomationTaskBase._run_phases
+            _return_home_after_phases = MapAutomationTaskBase._return_home_after_phases
+            _last_warning_since = MapAutomationTaskBase._last_warning_since
+            phase_needs = {}
+            _note_phase_problem = MapAutomationTaskBase._note_phase_problem
+
+            def __init__(self):
+                super().__init__()
+                self.config = {}
+
+            def info_set(self, key, value):
+                self.info[key] = value
+
+            def log_info(self, message, *_a, **_k):
+                log.info(message)
+
+            def log_warning(self, message, *_a, **_k):
+                log.warning(message)
+
+            log_error = _save_diagnostic = log_info
+
+        task = TradeTask()
+
+        def cook():
+            task.log_warning("料理：三个技能组中都未稳定识别到制作料理技能。")
+            return False
+
+        def sell():
+            task.log_info("卖：价目表显示背包里没有今天120%的清单商品，直接结束出售。")
+            return True
+
+        with problem_report.run_scope(task) as scope:
+            scope.result = task._run_phases(
+                SimpleNamespace(return_home=lambda: NavigationResult(True, ScreenState.HOME)),
+                (("制作料理", "料理", cook), ("卖", "卖", sell)),
+            )
+        self.assertFalse(scope.result)
+        self.assertEqual("制作料理：料理：三个技能组中都未稳定识别到制作料理技能", task._why)
+
     def test_trigger_tasks_and_app_exit_keep_nothing(self):
         task = Task()
         with problem_report.run_scope(task, keep=False):

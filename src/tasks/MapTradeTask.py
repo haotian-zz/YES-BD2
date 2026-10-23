@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
+import threading
+import time
 from pathlib import Path
 
 from ok import Config
@@ -119,6 +122,10 @@ class MapAutomationTaskBase(BaseBD2Task):
         skipped: list[str] = []
         # Home was not reached after a failed phase: nothing more is tried.
         stranded = False
+        # bd2 会话 2026-10-22: 料理 failed (no cooking skill) but the
+        # summary gave 卖's last line as the reason; the first failed
+        # phase's own reason is kept for it.
+        self._why = ""
         self.info_set("状态", f"{self.task_log_name}启动。")
         try:
             for index, (name, config_key, action) in enumerate(phases):
@@ -136,6 +143,7 @@ class MapAutomationTaskBase(BaseBD2Task):
                     continue
                 self.info_set("当前阶段", name)
                 self.log_info(f"{self.task_log_name}：开始{name}。")
+                phase_since = time.time()
                 try:
                     result = action()
                     success = bool(getattr(result, "success", result))
@@ -144,6 +152,8 @@ class MapAutomationTaskBase(BaseBD2Task):
                         self.log_info(f"{name}：{message}")
                     (completed if success else failed).append(name)
                     if not success:
+                        message = message or self._last_warning_since(phase_since)
+                        self._why = self._why or (f"{name}：{message}" if message else name)
                         self._note_phase_problem("fail", f"{name}：{message}" if message else name)
                         self._save_diagnostic(f"{self.diagnostic_prefix}_{name}_failed")
                 except (TaskDisabledException, FinishedException):
@@ -159,11 +169,13 @@ class MapAutomationTaskBase(BaseBD2Task):
                     if getattr(self, "_frozen_watch", None) is not None:
                         self._frozen_watch = FrozenWatch()
                     failed.append(name)
+                    self._why = self._why or f"{name}：{why}"
                     self._note_phase_problem("fail", f"{name}：{why}")
                     self.log_warning(f"{name}：{why}。")
                     self._save_diagnostic(f"{self.diagnostic_prefix}_{name}_frozen")
                 except Exception as exc:
                     failed.append(name)
+                    self._why = self._why or f"{name}：{exc}"
                     self._note_phase_problem("error", f"{name}：{exc}")
                     self.log_error(f"{self.task_log_name}子流程失败：{name}。", exc)
                     self._save_diagnostic(f"{self.diagnostic_prefix}_{name}_error")
@@ -194,6 +206,16 @@ class MapAutomationTaskBase(BaseBD2Task):
         self.info_set("状态", f"{self.task_log_name}完成。")
         self.log_completion(f"{self.task_log_name}：所有已开启流程完成。")
         return True
+
+    @staticmethod
+    def _last_warning_since(since: float) -> str:
+        """The phase's last warning, e.g. 料理's 「三个技能组中都未…」."""
+        for _at, level, text in reversed(
+            problem_report.recent_lines(since, threading.get_ident())
+        ):
+            if level >= logging.WARNING:
+                return text.rstrip("。")
+        return ""
 
     def _return_home_after_phases(self, navigator) -> bool:
         """Home by the navigator, else by the generic back arrows and dialogs."""
