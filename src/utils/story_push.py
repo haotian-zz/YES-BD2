@@ -48,6 +48,7 @@ class StoryScreen(str, Enum):
     BATTLE_DEFEAT = "battle_defeat"
     RETRY_CONFIRM = "retry_confirm"
     PRESET_CONFIRM = "preset_confirm"
+    PRESET_PANEL = "preset_panel"
     BATTLE_READY = "battle_ready"
     NPC_FOCUS = "npc_focus"
     INTERACT = "interact"
@@ -324,6 +325,9 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
     preset_confirm = preset_confirm_point(boxes)
     if preset_confirm is not None:
         return StoryScreen.PRESET_CONFIRM, preset_confirm
+    if preset_panel_shown(boxes):
+        # Left open (an Esc closed only its 确认 dialog): ✕.
+        return StoryScreen.PRESET_PANEL, PRESET_PANEL_CLOSE_POINT
     from_start = _find(boxes, RETRY_FROM_START_TEXTS)
     if from_start is not None:
         x, y = _centre(from_start)

@@ -107,6 +107,7 @@ class ClassifyTest(unittest.TestCase):
                          _box("覆盖", 1481, 476), _box("删除", 1229, 691), _box("使用", 1355, 692),
                          _box("覆盖", 1481, 692), _box("最近使用阵形", 1260, 812, 120)]
         self.assertEqual((1356, 476), story_push.preset_use_point(panel))
+        self.assertEqual((StoryScreen.PRESET_PANEL, story_push.PRESET_PANEL_CLOSE_POINT), story_push.classify(panel))
         self.assertEqual((1355, 692), story_push.preset_use_point(panel, 2))
         self.assertIsNone(story_push.preset_use_point(panel, 3))
         confirm = [_box("使用预设", 453, 273, 100), _box("是否使用无名称预设？使用预设时，装备也将一同", 1282, 711, 400),

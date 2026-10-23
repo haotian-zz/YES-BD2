@@ -511,6 +511,7 @@ class StoryPushTask(CartridgeFieldTask):
                 self._click_reference(*point, after_sleep=3.0)  # 不用确认：推图循环下一轮重看画面
             elif screen in (
                 StoryScreen.PRESET_CONFIRM,
+                StoryScreen.PRESET_PANEL,
                 StoryScreen.INSERT,
                 StoryScreen.CHOICE,
                 StoryScreen.SKIP_CONFIRM,
