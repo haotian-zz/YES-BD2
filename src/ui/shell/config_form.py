@@ -38,6 +38,7 @@ HINTS_KEPT = {
     "EventBattleTask": ("只刷普通难度", "挑战战斗最高关卡"),
     "MissionRewardTask": (),
     "MailRewardTask": (),
+    "AchievementRewardTask": (),
 }
 
 

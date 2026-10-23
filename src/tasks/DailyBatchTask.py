@@ -27,7 +27,12 @@ from src.tasks.PVPTask import PVPTask
 from src.tasks.QuickHuntTask import QuickHuntTask
 from src.tasks.RedemptionTowerTask import RedemptionTowerTask
 from src.tasks.RestaurantTask import RestaurantStoneTask
-from src.tasks.RewardClaimTasks import MailRewardTask, MissionRewardTask, PassRewardTask
+from src.tasks.RewardClaimTasks import (
+    AchievementRewardTask,
+    MailRewardTask,
+    MissionRewardTask,
+    PassRewardTask,
+)
 from src.tasks.run_history import day_start_ts
 from src.tasks.SquareGoddessTask import SquareGoddessTask
 from src.tasks.task_notifications import (
@@ -158,6 +163,8 @@ DAILY_BATCH_CHILDREN = (
     DailyBatchChild("领取任务奖励", MissionRewardTask),
     DailyBatchChild("领取通行证", PassRewardTask),
     DailyBatchChild("领取邮件", MailRewardTask),
+    # 2026-10-23: 成就经验 fills 成就等级, whose levels pay 钻石.
+    DailyBatchChild("领取成就奖励", AchievementRewardTask),
     # Red-badged 活动 pages after the mail (Leo 2026-10-03), before the long map run.
     DailyBatchChild("领取活动奖励", EventRewardTask),
     # Weekly progress, spread over the days: at most 7 cards a day.  Last of

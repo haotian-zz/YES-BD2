@@ -183,6 +183,7 @@ class TaskScheduleStoreTest(unittest.TestCase):
             "领取任务奖励",
             "领取通行证",
             "领取邮件",
+            "领取成就奖励",
             "每周跑图",
         ):
             self.assertEqual(scheduler.TASK_POLICIES[name].anchor, "daily")

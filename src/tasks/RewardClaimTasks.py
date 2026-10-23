@@ -1,4 +1,4 @@
-"""Mail, mission-reward and pass-reward claim tasks (日常收尾).
+"""Mail, mission-reward, pass-reward and achievement claim tasks (日常收尾).
 
 Entry points and page layouts were calibrated on the 简体 client, 2026-09-25;
 see ``claim_page`` for the shared page flow.
@@ -31,6 +31,15 @@ MISSION_TITLE_KEYWORDS = ("任务",)
 DAILY_MISSION_TITLE = ("每日任务",)
 WEEKLY_MISSION_TITLE = ("每周任务",)
 MISSION_CLAIM_BUTTON = ClaimButton(BOTTOM_CLAIM_ROI, ("全部获得", "全部领取"))
+
+# 2026-10-23: 成就 is the home bar icon right of 任务.  Its 全部 list and the
+# 成就等级 page (Lv.41 and up: 1000 钻石 a level) each have a 全部获得 at the
+# bottom right, at the mission page's spot.
+ACHIEVEMENT_ENTRY_POINT = (785, 985)
+ACHIEVEMENT_TITLE_KEYWORDS = ("成就",)
+ACHIEVEMENT_LEVEL_TAB_POINT = (175, 248)
+ACHIEVEMENT_LEVEL_TITLE = ("成就等级",)
+ACHIEVEMENT_CLAIM_BUTTON = ClaimButton(BOTTOM_CLAIM_ROI, ("全部获得", "全部领取"))
 
 PASS_ENTRY_POINT = (1659, 262)
 PASS_TITLE_KEYWORDS = ("通行证",)
@@ -150,6 +159,32 @@ class MissionRewardTask(_ClaimTaskBase):
                 return self._claim_fail("领取每周任务")
         if not self._leave_to_home("任务", MISSION_TITLE_KEYWORDS):
             return self._claim_fail("任务页返回主页")
+        return True
+
+
+class AchievementRewardTask(_ClaimTaskBase):
+    """2026-10-23: 成就 gives 成就经验; the 成就等级 it fills pays 钻石.  Claim
+    the achievements first, then the level rewards they unlocked."""
+
+    claim_log_name = "achievement"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.name = "领取成就奖励"
+        self.description = "打开成就页，一键领取成就经验，再到成就等级页领取等级奖励（钻石）。"
+        self.icon = FluentIcon.CERTIFICATE
+
+    def run_claim(self) -> bool:
+        if not self._open_page_from_home("成就", ACHIEVEMENT_ENTRY_POINT, ACHIEVEMENT_TITLE_KEYWORDS):
+            return self._claim_fail("打开成就")
+        if not self._claim_all("成就", ACHIEVEMENT_CLAIM_BUTTON, ACHIEVEMENT_TITLE_KEYWORDS):
+            return self._claim_fail("领取成就")
+        if not self._switch_tab("成就等级", ACHIEVEMENT_LEVEL_TAB_POINT, ACHIEVEMENT_LEVEL_TITLE):
+            return self._claim_fail("切换成就等级")
+        if not self._claim_all("成就等级", ACHIEVEMENT_CLAIM_BUTTON, ACHIEVEMENT_LEVEL_TITLE):
+            return self._claim_fail("领取成就等级")
+        if not self._leave_to_home("成就", ACHIEVEMENT_TITLE_KEYWORDS):
+            return self._claim_fail("成就返回主页")
         return True
 
 

@@ -107,6 +107,7 @@ TASK_POLICIES: dict[str, SchedulePolicy] = {
     "领取任务奖励": SchedulePolicy("daily"),
     "领取通行证": SchedulePolicy("daily"),
     "领取邮件": SchedulePolicy("daily"),
+    "领取成就奖励": SchedulePolicy("daily"),
     "每周跑图": SchedulePolicy("daily"),
     "浏览街机菜单": SchedulePolicy("weekly"),
     "小屋增加人气": SchedulePolicy("weekly"),

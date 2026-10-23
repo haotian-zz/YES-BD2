@@ -5,6 +5,8 @@ from unittest import mock
 import numpy as np
 
 from src.tasks.RewardClaimTasks import (
+    ACHIEVEMENT_LEVEL_TAB_POINT,
+    AchievementRewardTask,
     PASS_BADGE_STRIP,
     PASS_BADGE_TO_CARD_CENTER,
     PassRewardTask,
@@ -118,6 +120,45 @@ class PassBadgeTest(unittest.TestCase):
     def test_purchase_caption_is_never_a_pass_card(self):
         task = self._task(lambda _state: ([], [box("基础通行证"), box("购买高级通行证")]))
         self.assertEqual(["基础通行证"], PassRewardTask._pass_cards(task))
+
+
+class AchievementRewardTest(unittest.TestCase):
+    """2026-10-23: 成就经验 first, then the 成就等级 rewards it unlocked."""
+
+    def _task(self, fail_at=None):
+        task = object.__new__(AchievementRewardTask)
+        task.steps = []
+
+        def step(name, ok=True):
+            task.steps.append(name)
+            return ok and name != fail_at
+
+        task._open_page_from_home = lambda label, _point, _title: step(f"open {label}")
+        task._claim_all = lambda label, _button, _title: step(f"claim {label}")
+        task._switch_tab = lambda label, point, _title: step(f"tab {label} {point}")
+        task._leave_to_home = lambda label, _title: step(f"home {label}")
+        task._claim_fail = lambda label: task.steps.append(f"fail {label}") and False
+        return task
+
+    def test_achievements_then_level_rewards_then_home(self):
+        task = self._task()
+        self.assertTrue(task.run_claim())
+        self.assertEqual(
+            [
+                "open 成就",
+                "claim 成就",
+                f"tab 成就等级 {ACHIEVEMENT_LEVEL_TAB_POINT}",
+                "claim 成就等级",
+                "home 成就",
+            ],
+            task.steps,
+        )
+
+    def test_level_page_not_reached_fails_without_claiming_it(self):
+        task = self._task(fail_at=f"tab 成就等级 {ACHIEVEMENT_LEVEL_TAB_POINT}")
+        self.assertFalse(task.run_claim())
+        self.assertNotIn("claim 成就等级", task.steps)
+        self.assertEqual("fail 切换成就等级", task.steps[-1])
 
 
 class ClickUntilChangedTest(unittest.TestCase):

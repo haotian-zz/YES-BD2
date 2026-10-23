@@ -110,6 +110,7 @@ class DailyBatchTaskTest(unittest.TestCase):
             "领取任务奖励",
             "领取通行证",
             "领取邮件",
+            "领取成就奖励",
             # Leo 2026-10-03: the red-badged 活动 pages, after the mail.
             "领取活动奖励",
             # User 2026-09-28: collection runs daily until the week is done;

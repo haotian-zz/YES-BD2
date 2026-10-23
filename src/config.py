@@ -204,6 +204,7 @@ config = {
         ["src.tasks.RewardClaimTasks", "MissionRewardTask"],
         ["src.tasks.RewardClaimTasks", "PassRewardTask"],
         ["src.tasks.RewardClaimTasks", "MailRewardTask"],
+        ["src.tasks.RewardClaimTasks", "AchievementRewardTask"],
         ["src.tasks.EventRewardTask", "EventRewardTask"],
         ["src.tasks.WeeklyTasks", "ArcadeBrowseTask"],
         ["src.tasks.WeeklyTasks", "HomePopularityTask"],
