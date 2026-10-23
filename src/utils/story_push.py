@@ -31,6 +31,7 @@ import cv2
 import numpy as np
 
 from src.utils.field_battle import AUTO_TEXTS, LEAVE_TEXTS, TURN_PATTERN
+from src.utils.image_utils import correlation_response, template_match_response
 from src.utils.ocr_utils import normalize_ocr_text
 
 
@@ -201,10 +202,10 @@ def icon_score(frame_1080: np.ndarray, template_path: Path, search, white: bool 
     if patch.shape[0] < template.shape[0] or patch.shape[1] < template.shape[1]:
         return 0.0
     if white:
-        result = cv2.matchTemplate(_white(patch), template, cv2.TM_CCORR_NORMED)
+        result = correlation_response(_white(patch), template)
     else:
-        result = cv2.matchTemplate(cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY), template, cv2.TM_CCOEFF_NORMED)
-    return float(np.nan_to_num(result).max())
+        result = template_match_response(cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY), template)
+    return float(result.max())
 
 
 def icons(frame_1080: np.ndarray) -> dict[str, bool]:
