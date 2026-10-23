@@ -256,7 +256,7 @@ class RecordTest(unittest.TestCase):
             diagnostic_prefix = "map_trade"
             _run_phases = MapAutomationTaskBase._run_phases
             _return_home_after_phases = MapAutomationTaskBase._return_home_after_phases
-            _last_warning_since = MapAutomationTaskBase._last_warning_since
+            _last_warning_since = staticmethod(MapAutomationTaskBase._last_warning_since)
             phase_needs = {}
             _note_phase_problem = MapAutomationTaskBase._note_phase_problem
 
