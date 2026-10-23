@@ -72,6 +72,8 @@ DEFEAT_WORDS = ("defeat",)
 # E after this long.
 FIELD_ONLY_KEY_SECONDS = 4.0
 POLL_SECONDS = 1.0
+# Login (with a data download after an update) before the push gives up.
+LOGIN_MAX_SECONDS = 900
 # A clear is followed by the next story, the 「指南」 book or the field
 # within this many looks (about 2 s each).
 AFTER_CLEARED_LOOKS = 10
@@ -146,9 +148,7 @@ class StoryPushTask(CartridgeFieldTask):
                     self.log_info(f"{LABEL}：已经在剧情游戏卡里，直接推图。")
             else:
                 self._close_unlock_notices()
-                if not self._open_page_from_home(
-                    "游戏卡珍藏集", CARTRIDGE_SLOT_POINT, COLLECTION_TITLE_KEYWORDS
-                ):
+                if not self._open_collection():
                     return self._claim_fail("打开游戏卡珍藏集")
                 card = self._enter_unfinished_story_card()
                 if card is None:
@@ -192,6 +192,45 @@ class StoryPushTask(CartridgeFieldTask):
                 return self._field_to_home()
             if not self._field_to_home():
                 return self._claim_fail("返回主页")
+
+    def _open_collection(self) -> bool:
+        """游戏卡珍藏集 from 主页, logging in first when the game is on its
+        title screen (started right after the game opened, or sent back there
+        mid-push)."""
+        for _attempt in range(2):
+            self._recovery_saw_title = False
+            if self._open_page_from_home("游戏卡珍藏集", CARTRIDGE_SLOT_POINT, COLLECTION_TITLE_KEYWORDS):
+                return True
+            if not getattr(self, "_recovery_saw_title", False) or not self._log_in_here():
+                return False
+        return False
+
+    def _log_in_here(self) -> bool:
+        """Run the auto-login step here until it reaches 主页.
+
+        A task started by itself runs as ok-script's one-time task, and the
+        login trigger does not run while one does (live 2026-10-22: started
+        on 「TOUCH TO START」, the push stopped at once with 「交给自动登录」).
+        """
+        try:
+            from src.tasks.trigger.AutoLoginTask import AutoLoginTask
+        except ImportError:  # pragma: no cover
+            return False
+        self._why = ""  # 「没能回到主页」 was the title screen
+        login = self.executor.get_task_by_class(AutoLoginTask)
+        if login is None or not bool(getattr(login, "_enabled", False)):
+            self._note_why("游戏在标题画面，自动登录没开，请先登录")
+            return False
+        self.log_info(f"{LABEL}：游戏在标题画面，先自动登录。")
+        deadline = monotonic() + LOGIN_MAX_SECONDS
+        while monotonic() < deadline:
+            if getattr(login, "_finished", False):
+                self.log_info(f"{LABEL}：自动登录完成，接着推图。")
+                return True
+            login.run()
+            self.sleep(POLL_SECONDS)
+        self._note_why(f"自动登录 {LOGIN_MAX_SECONDS // 60} 分钟还没到主页")
+        return False
 
     def _after_clear(self) -> StoryScreen | None:
         """GUIDE once its button opened the collection, another story screen
