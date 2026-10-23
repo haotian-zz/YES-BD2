@@ -109,6 +109,10 @@ TALK_ADVANCE_POINT = (960, 950)
 # 「2 重新躺下。」, the card 1 prologue); the first one is taken.
 CHOICE_ROI = (600, 820, 1320, 1060)
 CHOICE_MIN_GAP = 50
+# A single answer framed mid-screen over black (「1 呃…怎么了…？」, card 1 困难
+# opening, live 2026-10-23): 跳过 does nothing until it is taken, so the talk
+# sat five minutes.  The talk's own lines run along the bottom.
+LONE_CHOICE_ROI = (240, 420, 1680, 660)
 # A lost story battle (PATH OF TRIALS, live 2026-10-22): 「DEFEAT」 over
 # 「返回 / 重新挑战 / 继续（第1次）」 bottom centre, no 「离开」.
 DEFEAT_TEXTS = ("defeat",)
@@ -373,6 +377,10 @@ def classify(boxes, seen: dict[str, bool] | None = None) -> tuple[StoryScreen, t
         )
         if len(options) >= 2 and _centre(options[1])[1] - _centre(options[0])[1] >= CHOICE_MIN_GAP:
             x, y = _centre(options[0])
+            return StoryScreen.CHOICE, (round(x), round(y))
+        lone = [box for box in boxes if len(_norm(box)) >= 2 and _inside(box, LONE_CHOICE_ROI)]
+        if len(lone) == 1:
+            x, y = _centre(lone[0])
             return StoryScreen.CHOICE, (round(x), round(y))
         return StoryScreen.TALK, TALK_SKIP_POINT
     # Walking goes past people with their interaction button showing.

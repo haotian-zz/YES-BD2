@@ -54,6 +54,13 @@ class ClassifyTest(unittest.TestCase):
         ]
         self.assertEqual((StoryScreen.ACCEPT, (1047, 752)), story_push.classify(boxes))
 
+    def test_lone_answer_mid_screen_is_taken(self):
+        # card 1 困难 live 2026-10-23: 「1 呃…怎么了…？」 framed mid-screen over
+        # black; 跳过 did nothing for five minutes.
+        boxes = [_box("Q", 1758, 59, 20), _box("F", 1520, 104, 20), _box("F2", 1640, 104, 30),
+                 _box("呃…怎么了…？", 951, 537, 180)]
+        self.assertEqual((StoryScreen.CHOICE, (951, 537)), story_push.classify(boxes))
+
     def test_walking_banner_waits(self):
         screen, point = story_push.classify(
             FIELD_HUD + [_box("主线", 1625, 138), _box("自动移动中：主线任务", 960, 912, 220)]
