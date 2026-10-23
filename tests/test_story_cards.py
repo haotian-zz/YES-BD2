@@ -49,6 +49,21 @@ class DifficultyBannerTest(unittest.TestCase):
         self.assertIsNone(story_cards.difficulty_card([_box("剧情游戏卡20／20", 248, 330)]))
 
 
+class BannerStripTest(unittest.TestCase):
+    def test_a_strip_under_each_story_and_character_row_title(self):
+        # live 2026-10-23: titles at y 326 / 612, banners at 553 / 838
+        boxes = [
+            _box("剧情游戏卡20/20", 244, 326),
+            _box("角色游戏卡11/11", 248, 612),
+            _box("战斗玩法游戏卡带6/6", 447, 895),
+            _box("游戏卡珍藏集", 345, 44),
+        ]
+        self.assertEqual([(0, 513, 1920, 80), (0, 799, 1920, 80)], story_cards.banner_strips(boxes))
+
+    def test_a_title_too_low_for_its_banner_has_no_strip(self):
+        self.assertEqual([], story_cards.banner_strips([_box("剧情游戏卡20/20", 244, 900)]))
+
+
 class RewardsSwitchTest(unittest.TestCase):
     def _frame(self, bgr):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)

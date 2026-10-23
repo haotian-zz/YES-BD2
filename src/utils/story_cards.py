@@ -148,6 +148,12 @@ DIFFICULTY_BANNER_TEXTS = ("可进行困难难度", "可进行极难难度", "�
 DIFFICULTY_BANNER_TO_CARD = -100
 # Same card on a re-read page: its point moves by a few pixels only.
 SKIP_NEAR = 80
+# Read on the whole page the light banner text is often missed (live
+# 2026-10-23: card 13's 「可进行极难难度」 under a read 「剧情游戏卡」 title);
+# a strip at the banners' height under each row title reads it.
+BANNER_ROW_TITLES = STORY_ROW_TITLES + ("角色游戏卡", "角色遊戲卡")
+BANNER_BELOW_TITLE = 227
+BANNER_STRIP_HEIGHT = 80
 # 「查看战场奖励」 top right swaps the banners for reward icons.  Its switch
 # is gold on the left while on (BGR ~(62,142,182)) and a white knob there
 # while off (~(210,218,222)), live 2026-10-23.
@@ -172,6 +178,20 @@ def difficulty_card(boxes, skip=()):
         if not any(abs(x - sx) < SKIP_NEAR and abs(y - sy) < SKIP_NEAR for sx, sy in skip):
             return str(box.name), (x, y)
     return None
+
+
+def banner_strips(boxes):
+    """(x, y, w, h) strips at the banner height under each story/character
+    row title on the page."""
+    titles = [normalize_ocr_text(title) for title in BANNER_ROW_TITLES]
+    strips = []
+    for box in boxes or ():
+        if not any(normalize_ocr_text(getattr(box, "name", "")).startswith(title) for title in titles):
+            continue
+        top = round(box.y + box.height / 2 + BANNER_BELOW_TITLE - BANNER_STRIP_HEIGHT / 2)
+        if 0 <= top and top + BANNER_STRIP_HEIGHT <= 1080:
+            strips.append((0, top, 1920, BANNER_STRIP_HEIGHT))
+    return strips
 
 
 def rewards_switch_on(frame_1080: np.ndarray) -> bool:

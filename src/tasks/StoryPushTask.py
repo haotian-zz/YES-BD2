@@ -437,7 +437,10 @@ class StoryPushTask(CartridgeFieldTask):
         self.scroll_client((0.5, 0.55), PAGE_SCROLL_UP_NOTCHES, count=1, after_sleep=1.0)
         previous = None
         for page in range(DIFFICULTY_PAGES):
-            boxes = self._reference_boxes(self.capture_frame(), None, "珍藏集难度标签")
+            frame = self.capture_frame()
+            boxes = self._reference_boxes(frame, None, "珍藏集难度标签")
+            for strip in story_cards.banner_strips(boxes):
+                boxes = boxes + self._reference_boxes(frame, strip, "珍藏集难度标签")
             found = story_cards.difficulty_card(boxes, [point for at, point in skip if at == page])
             if found is not None:
                 text, point = found
