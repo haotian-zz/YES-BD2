@@ -3322,6 +3322,7 @@ class TradeMerchantNavigationTest(unittest.TestCase):
         navigator.classify = lambda _frame=None: (
             ScreenState.SANDBOX if in_field else ScreenState.UNKNOWN
         )
+        navigator._area_map_open = lambda: False  # the field, no area map
         return navigator
 
     def test_walk_to_merchant_fails_without_ocr_when_guide_button_missing(self):

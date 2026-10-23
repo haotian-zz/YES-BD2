@@ -20,3 +20,6 @@ capture. No account details are on them.
   both page arrows miss their templates.
 - `auto_move_dialog_player_fhd.jpg`: sandbox large map (雷瓦汀基地) under the
   game's 自动移动 dialog 「是否自动移动前往所选目的地？」.
+- `hunting_ground_map_player_fhd.jpg`: sandbox large map of a chapter's hunting
+  ground (第9章 「战斗 守山人休息处」, player report 2026-10-23); its title is
+  none of the cards' own maps.

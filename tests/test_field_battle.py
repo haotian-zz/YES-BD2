@@ -102,6 +102,7 @@ class ScreensTest(unittest.TestCase):
     def test_way_home_hands_a_battle_over_instead_of_pressing(self):
         escapes = []
         task = SimpleNamespace(
+            FIELD_BATTLE_ESCAPE=True,
             capture_frame=lambda: np.zeros((1080, 1920, 3), np.uint8),
             log_info=lambda *a, **k: None,
             tap_escape=lambda after_sleep=0: escapes.append(after_sleep) or True,
@@ -109,6 +110,24 @@ class ScreensTest(unittest.TestCase):
         vision = SimpleNamespace(ocr_boxes=lambda frame, name: _boxes(*IN_BATTLE_AUTO))
         self.assertEqual("battle", recovery._handle_dialog(task, vision))
         self.assertEqual([], escapes)
+
+    def test_only_the_map_run_treats_a_battle_as_one_to_run_from(self):
+        # Leo 2026-10-23 「撞怪逃跑這個機制只能在跑圖的時候」「其他都不要亂用」:
+        # 活动每日战斗's own auto battle got Esc from the way home.
+        from src.tasks.EventBattleTask import EventBattleTask
+        from src.tasks.MapCollectionTask import MapCollectionTask
+        from src.tasks.MapTradeTask import MapTradeTask
+
+        self.assertTrue(MapCollectionTask.FIELD_BATTLE_ESCAPE)
+        self.assertFalse(MapTradeTask.FIELD_BATTLE_ESCAPE)
+        self.assertFalse(EventBattleTask.FIELD_BATTLE_ESCAPE)
+        self.assertFalse(BaseBD2Task.FIELD_BATTLE_ESCAPE)
+        task = SimpleNamespace(
+            capture_frame=lambda: np.zeros((1080, 1920, 3), np.uint8),
+            log_info=lambda *a, **k: None,
+        )
+        vision = SimpleNamespace(ocr_boxes=lambda frame, name: _boxes(*IN_BATTLE_AUTO))
+        self.assertEqual("none", recovery._handle_dialog(task, vision))
 
 
 class _Clock:
@@ -123,7 +142,9 @@ class _Clock:
 
 
 class _Task:
-    """Just what leave_field_battle and press_and_confirm use."""
+    """Just what leave_field_battle and press_and_confirm use (每周跑图)."""
+
+    FIELD_BATTLE_ESCAPE = True
 
     def __init__(self, screens, clock):
         self.screens = list(screens)
@@ -173,6 +194,13 @@ class _Task:
 
 
 class LeaveBattleTest(unittest.TestCase):
+    def test_a_task_other_than_the_map_run_never_runs_away(self):
+        task = _Task([IN_BATTLE_AUTO], _Clock())
+        task.FIELD_BATTLE_ESCAPE = False
+        self.assertEqual("none", task.leave_field_battle("活动每日战斗", _boxes(*IN_BATTLE_AUTO)))
+        self.assertEqual([], task.escapes)
+        self.assertEqual([], task.clicks)
+
     """Leo 2026-10-22 「判定進戰鬥 就直接按esc 1秒按一下 最多按4下 看到有逃跑就不按」."""
 
     def setUp(self):
