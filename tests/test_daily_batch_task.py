@@ -799,6 +799,59 @@ class DailyBatchTaskTest(unittest.TestCase):
         self.assertTrue(task._start_after_login)
         self.assertIn("等待自动登录", task.info.get("状态"))
 
+    def test_headless_run_logs_in_then_runs(self):
+        # Live 2026-10-24: ok.cli run_task on 「TOUCH TO START」 deferred, and
+        # the process ended with the task, so nothing ran.
+        from src.tasks.trigger.AutoLoginTask import AutoLoginTask
+
+        class First:
+            pass
+
+        calls = []
+        first = _ChildTask("first", calls)
+        login = SimpleNamespace(_enabled=True, _finished=False, runs=0)
+
+        def login_run():
+            login.runs += 1
+            login._finished = login.runs >= 3
+
+        login.run = login_run
+        task, _resets = self.make_task(
+            {First: first, AutoLoginTask: login},
+            (DailyBatchChild("第一项", First),),
+            {"启用": True, "第一项": True},
+        )
+        task.sleep = lambda _seconds: None
+
+        with mock.patch.object(DailyBatchTask, "_headless", return_value=True):
+            self.assertTrue(DailyBatchTask.run(task))
+        self.assertEqual(3, login.runs)
+        self.assertEqual([("first", True)], calls)
+        self.assertFalse(getattr(task, "_start_after_login", False))
+
+    def test_headless_run_stops_when_login_never_finishes(self):
+        from src.tasks.trigger.AutoLoginTask import AutoLoginTask
+
+        class First:
+            pass
+
+        calls = []
+        first = _ChildTask("first", calls)
+        login = SimpleNamespace(_enabled=True, _finished=False, run=lambda: None)
+        task, _resets = self.make_task(
+            {First: first, AutoLoginTask: login},
+            (DailyBatchChild("第一项", First),),
+            {"启用": True, "第一项": True},
+        )
+        task.sleep = lambda _seconds: None
+
+        with (
+            mock.patch.object(DailyBatchTask, "_headless", return_value=True),
+            mock.patch("src.tasks.DailyBatchTask.wait_for", return_value=False),
+        ):
+            self.assertFalse(DailyBatchTask.run(task))
+        self.assertEqual([], calls)
+
     def test_run_proceeds_when_auto_login_settled(self):
         from src.tasks.trigger.AutoLoginTask import AutoLoginTask
 

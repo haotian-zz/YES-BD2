@@ -43,6 +43,7 @@ from src.tasks.task_notifications import (
 )
 from src.tasks.WeeklyTasks import ArcadeBrowseTask, HomePopularityTask
 from src.utils import game_process, game_size, keep_awake, scheduled_start
+from src.utils.press_confirm import wait_for
 
 RUN_MODE_ALL = "all"
 RUN_MODE_INCOMPLETE = "incomplete"
@@ -73,6 +74,8 @@ CRASH_RESTARTS_MAX = 2
 # A closed game may be the player's doing (the taskbar, the window's X): this
 # long to press 停止 before it is opened again (decision 9 of the 10-10 plan, its default).
 REOPEN_COUNTDOWN_SECONDS = 10
+# A headless start logs in itself (with a data download after an update).
+HEADLESS_LOGIN_MAX_SECONDS = 900
 CRASH_NOTE = "游戏闪退了"
 CRASH_DONE_NOTE = "中断前已经做完"
 
@@ -413,14 +416,52 @@ class ChildBatchTask(BaseTask):
             return False
         return login_task.finish_in_game()
 
+    @staticmethod
+    def _headless() -> bool:
+        """Started by ``ok.cli run_task``: no GUI, and the process ends with
+        this task, so the login trigger never gets to re-queue it."""
+        try:
+            from ok import og
+
+            return not bool((getattr(og, "config", None) or {}).get("use_gui", True))
+        except Exception:
+            return False
+
+    def _log_in_here(self) -> bool:
+        """Run the auto-login step here until it reaches 主页 (live 2026-10-24:
+        a headless start on 「TOUCH TO START」 deferred and the process ended
+        without running anything)."""
+        from src.tasks.trigger.AutoLoginTask import AutoLoginTask
+
+        login = self.executor.get_task_by_class(AutoLoginTask)
+        self.log_info(f"{self.batch_label}：游戏在标题画面，先自动登录。")
+
+        def logged_in() -> bool:
+            if getattr(login, "_finished", False):
+                return True
+            login.run()
+            return False
+
+        if wait_for(logged_in, HEADLESS_LOGIN_MAX_SECONDS, sleep=self.sleep, poll=1.0):
+            self.log_info(f"{self.batch_label}：自动登录完成，开始执行。")
+            return True
+        self.log_warning(
+            f"{self.batch_label}：自动登录 {HEADLESS_LOGIN_MAX_SECONDS // 60} 分钟还没到主页，停止。"
+        )
+        return False
+
     def run(self, run_mode: str | None = None):
         self.player_stepped_in = False  # left by a run stopped while paused
         if self._auto_login_pending() and not self._settle_login_in_game():
-            # 门控期间不消费注入的 run_mode，放行后的正式运行再取。
-            self._start_after_login = True
-            self.info_set("状态", "等待自动登录完成，完成后自动开始。")
-            self.log_info(f"{self.batch_label}：自动登录未完成，待登录完成后自动开始。")
-            return True
+            if self._headless():
+                if not self._log_in_here():
+                    return False
+            else:
+                # 门控期间不消费注入的 run_mode，放行后的正式运行再取。
+                self._start_after_login = True
+                self.info_set("状态", "等待自动登录完成，完成后自动开始。")
+                self.log_info(f"{self.batch_label}：自动登录未完成，待登录完成后自动开始。")
+                return True
         run_mode = self._take_run_mode(run_mode)
         if not getattr(self, "_resuming_after_crash", False):
             # A start by the player: the count of 闪退 restarts begins again.
