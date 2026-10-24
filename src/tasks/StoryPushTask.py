@@ -30,6 +30,7 @@ from src.tasks.DoomBookTask import (
 )
 from src.tasks.task_vision_mixin import REFERENCE_HEIGHT, REFERENCE_WIDTH
 from src.utils import story_cards, story_push
+from src.utils.press_confirm import wait_for
 from src.utils.story_push import StoryScreen
 
 # Rows in the order the user gave (2026-10-22): 剧情游戏卡 first, then 店长.
@@ -276,13 +277,16 @@ class StoryPushTask(CartridgeFieldTask):
             self._note_why("游戏在标题画面，自动登录没开，请先登录")
             return False
         self.log_info(f"{LABEL}：游戏在标题画面，先自动登录。")
-        deadline = monotonic() + LOGIN_MAX_SECONDS
-        while monotonic() < deadline:
+
+        def logged_in() -> bool:
             if getattr(login, "_finished", False):
-                self.log_info(f"{LABEL}：自动登录完成，接着推图。")
                 return True
             login.run()
-            self.sleep(POLL_SECONDS)
+            return False
+
+        if wait_for(logged_in, LOGIN_MAX_SECONDS, sleep=self.sleep, poll=POLL_SECONDS):
+            self.log_info(f"{LABEL}：自动登录完成，接着推图。")
+            return True
         self._note_why(f"自动登录 {LOGIN_MAX_SECONDS // 60} 分钟还没到主页")
         return False
 

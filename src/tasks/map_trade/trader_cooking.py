@@ -650,7 +650,7 @@ class CookingFlowMixin:
             self._recover_cooking_list()
             return False
         self.task.log_info(f"料理：选中的料理都做不了，先做 {name} 约 {max(1, count)} 份练料理技能。")
-        self.vision.click_client(ready.start_match.center, ready.frame.shape, after_sleep=0.0)
+        self.vision.click_client(ready.start_match.center, ready.frame.shape, after_sleep=0.0)  # 不用确认：下面等制作按钮变灰
         if not self._wait_for_cooking_started(name, COOKING_START_TIMEOUT):
             self.task.log_warning(f"料理：{name} 点击后未确认制作按钮变灰。")
             self._recover_cooking_list()
@@ -708,10 +708,10 @@ class CookingFlowMixin:
         if len(boxes) >= 2 or (boxes and "+" in str(boxes[0].name)):
             box = max(boxes, key=lambda b: float(b.x))
             center = (round(float(box.x) + float(box.width) / 2), round(float(box.y) + float(box.height) / 2))
-            self.vision.click_client(center, detail.frame.shape, after_sleep=0.0)
+            self.vision.click_client(center, detail.frame.shape, after_sleep=0.0)  # 不用确认：少按一次只是少做 10 份
         else:
             x, y = COOKING_PLUS_TEN_POINT
-            self.task.operate_click(x / FHD_1080.width, y / FHD_1080.height, after_sleep=0.0)
+            self.task.operate_click(x / FHD_1080.width, y / FHD_1080.height, after_sleep=0.0)  # 不用确认：少按一次只是少做 10 份
         self.task.sleep(COOKING_QUANTITY_CLICK_SETTLE_SECONDS)
 
     def _wait_for_cooking_list(self, timeout: float) -> CookingListSnapshot | None:
