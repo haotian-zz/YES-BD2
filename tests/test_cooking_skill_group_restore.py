@@ -153,6 +153,7 @@ class CookingRestoresGroupTest(unittest.TestCase):
         trader, task, state = _trader(groups=2, cooking_in=1)
         trader._selected_cooking_recipes = lambda: ("x",)
         trader.progress = SimpleNamespace(should_cook=lambda **_k: True)
+        task.config = {"练料理份数": 0}
         with mock.patch.dict(
             trader_cooking.COOKING_RECIPE_SPECS, {"x": SimpleNamespace(file_name="x")}
         ):
