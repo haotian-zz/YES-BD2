@@ -448,6 +448,8 @@ class TradePage(Page):
             self.five[name] = tile
         line.addStretch(1)
         column.addLayout(line)
+        if task is not None and "练料理份数" in task.config:
+            column.addWidget(ConfigForm(task, keys=["练料理份数"], labels={"练料理份数": "都做不了时练料理（份）"}))
 
     def _toggle_dish(self, key: str, name: str) -> None:
         task = self.task()

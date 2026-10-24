@@ -166,7 +166,7 @@ class MapTradeConfigTest(unittest.TestCase):
         self.assertTrue(trade.default_config["制作料理"])
         self.assertEqual([], trade.default_config["5星料理"])
         self.assertEqual(
-            ["料理清单", "5星料理"], trade.config_type["制作料理"]["sub_configs"][True]
+            ["料理清单", "5星料理", "练料理份数"], trade.config_type["制作料理"]["sub_configs"][True]
         )
         # Every regular dish is selectable and ticked by default (review 2026-09-27).
         self.assertIn("街头烤鸡肉串", trade.default_config["料理清单"])

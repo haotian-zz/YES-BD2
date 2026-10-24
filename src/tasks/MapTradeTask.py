@@ -25,7 +25,11 @@ from src.tasks.map_trade.sale_days import (
     sale_day_key,
 )
 from src.tasks.map_trade.trader import Trader
-from src.tasks.map_trade.trader_cooking import MAIN_COOKING_RECIPES
+from src.tasks.map_trade.trader_cooking import (
+    MAIN_COOKING_RECIPES,
+    PRACTICE_COOKING_DEFAULT,
+    PRACTICE_COOKING_KEY,
+)
 from src.tasks.map_trade.vision import Vision
 from src.utils.frozen_screen import FROZEN_SCREEN_SECONDS, FrozenScreen, FrozenWatch
 from src.utils.wait_limits import LOADING_MAX_SECONDS
@@ -317,6 +321,7 @@ class MapTradeTask(MapAutomationTaskBase):
                 "制作料理": True,
                 "料理清单": list(MAIN_COOKING_RECIPES),
                 "5星料理": [],
+                PRACTICE_COOKING_KEY: PRACTICE_COOKING_DEFAULT,
                 # 收藏重建周期 and 出售保险 were removed from the settings (Leo,
                 # 2026-10-05: 「用處不大」); a saved value is dropped on load and
                 # the trader falls back to never rebuilding / selling MAX.
@@ -332,6 +337,10 @@ class MapTradeTask(MapAutomationTaskBase):
                 "制作料理": "购买后按优先级制作料理，全部选择 MAX；灰色料理跳过。",
                 "料理清单": "要制作的料理（全部选择 MAX）；取消勾选的不做。街头烤鸡肉串总在最后。",
                 "5星料理": "额外制作的白框五道料理，默认不选；街头烤鸡肉串始终最后制作。",
+                PRACTICE_COOKING_KEY: (
+                    "选中的料理一道都做不了时（还没学到食谱或材料不够），先做列表里第一道亮着的料理这么多份，"
+                    "攒料理技能经验；每份花 2 个天赋神药。0 为不做。"
+                ),
                 "买": (
                     "按每日08:00库存批次到梦幻广场的商人洛兹处砍价（进不了广场时改去第一章商人无聊收集狂大叔），"
                     "然后直接按「一键购买全部收藏」，买游戏里已收藏的商品。"
@@ -358,7 +367,8 @@ class MapTradeTask(MapAutomationTaskBase):
             )
         self.config_type.update(
             {
-                "制作料理": {"sub_configs": {True: ["料理清单", "5星料理"]}},
+                "制作料理": {"sub_configs": {True: ["料理清单", "5星料理", PRACTICE_COOKING_KEY]}},
+                PRACTICE_COOKING_KEY: {"min": 0, "max": 500, "step": 10},
                 "料理清单": {"type": "multi_selection", "options": list(MAIN_COOKING_RECIPES)},
                 "5星料理": {
                     "type": "multi_selection",

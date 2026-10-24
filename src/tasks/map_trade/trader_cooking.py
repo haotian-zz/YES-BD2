@@ -130,6 +130,25 @@ COOKING_MAX_FIXED_POINT = (480, 588)
 COOKING_RECLICK_AFTER = 3.0
 COOKING_RECLICK_HITS = 2
 
+# Practice: when none of the chosen dishes could be cooked, cook this many of
+# the first dish the list shows bright, for the skill's EXP (user 2026-10-24:
+# 「先做能做的，把料理技能升上去」).  Live 2026-10-24 at 进阶: each dish gave
+# +2 EXP and cost 2 天赋神药; eleven filled about a quarter of the bar.
+PRACTICE_COOKING_KEY = "练料理份数"
+PRACTICE_COOKING_DEFAULT = 50
+# The list grid at 1920x1080: 8 cards a row, 126 px apart (live 2026-10-24).
+COOKING_GRID_FIRST_CENTER = (797, 188)
+COOKING_GRID_STEP = 126
+COOKING_GRID_COLUMNS = 8
+COOKING_GRID_ROWS = 7
+# The card's beige left edge, inside its border: bright cards read 127-149,
+# grey ones about 60, empty cells about 12 (live 2026-10-24).
+COOKING_GRID_STRIP = (-46, -25, -40, 25)
+COOKING_GRID_BRIGHT = 115
+COOKING_QUANTITY_STEP = 10
+# 「+10」 when its text cannot be read (live 2026-10-24, 1920x1080).
+COOKING_PLUS_TEN_POINT = (584, 882)
+
 COOKING_RECIPE_SPECS = {
     recipe: TemplateSpec(
         f"料理-{recipe}",
@@ -221,6 +240,32 @@ def _character_coverage(expected: str, observed: str) -> float:
     return matched / len(expected_text)
 
 
+def bright_recipe_cells(frame) -> list[tuple[int, int]]:
+    """Centres (1920x1080) of the list cards drawn bright, i.e. cookable."""
+
+    gray = to_gray(frame)
+    height, width = gray.shape[:2]
+    sx, sy = width / FHD_1080.width, height / FHD_1080.height
+    left, top, right, bottom = COOKING_GRID_STRIP
+    first_x, first_y = COOKING_GRID_FIRST_CENTER
+    cells = []
+    for row in range(COOKING_GRID_ROWS):
+        y = first_y + row * COOKING_GRID_STEP
+        for column in range(COOKING_GRID_COLUMNS):
+            x = first_x + column * COOKING_GRID_STEP
+            strip = gray[
+                round((y + top) * sy):round((y + bottom) * sy),
+                round((x + left) * sx):round((x + right) * sx),
+            ]
+            if strip.size and float(strip.mean()) >= COOKING_GRID_BRIGHT:
+                cells.append((x, y))
+    return cells
+
+
+def _dish_name(text: str) -> str:
+    return re.sub(r"[^\u4e00-\u9fff]", "", str(text))
+
+
 def _has_positive_quantity(text: str) -> bool:
     return any(int(value) > 0 for value in re.findall(r"\d+", normalize_text(text)))
 
@@ -292,6 +337,9 @@ class CookingFlowMixin:
                     self.task.log_warning(f"料理：{recipe} 未完成，停止后续料理。")
                     flow_success = False
                     break
+                practice = int(self.task.config.get(PRACTICE_COOKING_KEY, PRACTICE_COOKING_DEFAULT) or 0)
+                if flow_success and not cooked and practice > 0:
+                    flow_success = self._practice_cooking(practice)
         finally:
             if self._cooking_opened:
                 exited = self._leave_cooking_to_q_sp6()
@@ -567,6 +615,104 @@ class CookingFlowMixin:
             self.task.log_warning(f"料理：{recipe} 结果已确认，但未恢复料理列表。")
             return CookingRecipeOutcome.FAILED
         return CookingRecipeOutcome.COOKED
+
+    def _practice_cooking(self, count: int) -> bool:
+        """Cook ``count`` of the first bright dish for the skill's EXP."""
+
+        listed = self._wait_for_cooking_list(2.0)
+        if listed is None:
+            self.task.log_warning("料理：练料理技能前料理列表未确认。")
+            return False
+        cells = bright_recipe_cells(listed.frame)
+        if not cells:
+            self.task.log_info("料理：列表里没有亮着的料理（材料都不够），这次不练料理技能。")
+            return True
+        x, y = cells[0]
+        self.task.operate_click(x / FHD_1080.width, y / FHD_1080.height, after_sleep=0.0)  # 不用确认：下面等详情页
+        detail = self._wait_for_generic_detail(COOKING_PAGE_TIMEOUT)
+        if detail is None:
+            self.task.log_warning("料理：练料理技能，点开料理后未确认详情页。")
+            self._recover_cooking_list()
+            return False
+        name = self._detail_dish_name(detail.frame)
+        if not name:
+            self.task.log_warning("料理：练料理技能，详情页读不出料理名。")
+            self._recover_cooking_list()
+            return False
+        if not detail.enabled:
+            self.task.log_info(f"料理：练料理技能，{name} 制作按钮不可用，这次不练。")
+            return self._return_from_detail_to_list(name)
+        for _press in range(count // COOKING_QUANTITY_STEP):
+            self._press_plus_ten(name)
+        ready = self._wait_for_cooking_detail(name, COOKING_QUANTITY_VERIFY_SECONDS)
+        if ready is None or not ready.enabled:
+            self.task.log_warning(f"料理：练料理技能，{name} 选好数量后没回到可制作的详情页。")
+            self._recover_cooking_list()
+            return False
+        self.task.log_info(f"料理：选中的料理都做不了，先做 {name} 约 {max(1, count)} 份练料理技能。")
+        self.vision.click_client(ready.start_match.center, ready.frame.shape, after_sleep=0.0)
+        if not self._wait_for_cooking_started(name, COOKING_START_TIMEOUT):
+            self.task.log_warning(f"料理：{name} 点击后未确认制作按钮变灰。")
+            self._recover_cooking_list()
+            return False
+        if self._wait_for_cooking_result(name, COOKING_COMPLETION_TIMEOUT) is None:
+            self._recover_cooking_list()
+            return False
+        trade_detail.note_dish(self, name, getattr(self, "_last_cooking_result_text", ""))
+        self._status("料理进度", f"练料理技能：{name}")
+        return self._return_from_detail_to_list(name)
+
+    def _wait_for_generic_detail(self, timeout: float) -> CookingDetailSnapshot | None:
+        end_at = monotonic() + max(0.0, timeout)
+        while True:
+            snapshot = self._generic_cooking_detail_snapshot()
+            if snapshot is not None:
+                return snapshot
+            if monotonic() >= end_at:
+                return None
+            self.task.sleep(COOKING_POLL_INTERVAL)
+
+    def _detail_dish_name(self, frame) -> str:
+        """The top line of the detail's name area (the line under it is 拥有N个食物)."""
+
+        boxes = [
+            box
+            for box in self.vision.ocr_boxes(
+                frame, "料理详情-练习料理名", relative_roi=COOKING_DETAIL_NAME_ROI, target_height=900
+            )
+            if _dish_name(self.vision.simplify(str(getattr(box, "name", ""))))
+            and getattr(box, "y", None) is not None
+        ]
+        if not boxes:
+            return ""
+        top = min(boxes, key=lambda box: float(box.y))
+        return _dish_name(self.vision.simplify(str(top.name)))
+
+    def _press_plus_ten(self, name: str) -> None:
+        """「+10」: of the two 「10」 boxes (normalize drops the signs) the right one."""
+
+        detail = self._cooking_detail_snapshot(name)
+        boxes = []
+        if detail is not None:
+            boxes = [
+                box
+                for box in self.vision.ocr_boxes(
+                    detail.frame,
+                    f"料理-{name}数量选项",
+                    relative_roi=COOKING_QUANTITY_CHOICES_ROI,
+                    target_height=900,
+                )
+                if normalize_text(self.vision.simplify(str(getattr(box, "name", "")))) == "10"
+                and getattr(box, "x", None) is not None
+            ]
+        if len(boxes) >= 2 or (boxes and "+" in str(boxes[0].name)):
+            box = max(boxes, key=lambda b: float(b.x))
+            center = (round(float(box.x) + float(box.width) / 2), round(float(box.y) + float(box.height) / 2))
+            self.vision.click_client(center, detail.frame.shape, after_sleep=0.0)
+        else:
+            x, y = COOKING_PLUS_TEN_POINT
+            self.task.operate_click(x / FHD_1080.width, y / FHD_1080.height, after_sleep=0.0)
+        self.task.sleep(COOKING_QUANTITY_CLICK_SETTLE_SECONDS)
 
     def _wait_for_cooking_list(self, timeout: float) -> CookingListSnapshot | None:
         started = monotonic()
