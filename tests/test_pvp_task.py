@@ -3664,6 +3664,21 @@ class PvpFreeCocktailGuardTest(unittest.TestCase):
         task = self._task("10倍战斗开始10", "36/40", "自动战斗 2次", switch_on=False)
         self.assertFalse(PVPTask._verify_free_cost(task, 10, 2))
 
+    def test_unread_number_is_named_with_what_was_read(self):
+        # Player v0.2.11 2026-10-24: the message could not say which number failed.
+        task = self._task("10倍战斗开始10", "+1.42K", "自动战斗 2次")
+        self.assertFalse(PVPTask._verify_free_cost(task, 10, 2))
+        message = task.log_warning.call_args.args[0]
+        self.assertIn("免费鸡尾酒数（右上角读到：+1.42K）", message)
+        self.assertNotIn("每场消耗（", message)
+        self.assertNotIn("场数（", message)
+
+        task = self._task("战斗开始", "36/40", "")
+        self.assertFalse(PVPTask._verify_free_cost(task, 10, 2))
+        message = task.log_warning.call_args.args[0]
+        self.assertIn("每场消耗（战斗开始按钮读到：战斗开始 | 战斗开始）", message)
+        self.assertIn("场数（读到：-）", message)
+
     def test_wrong_multiplier_count_or_unreadable_text_is_refused(self):
         self.assertFalse(
             PVPTask._verify_free_cost(self._task("5倍战斗开始5", "36/40", "自动战斗 2次"), 10, 2)
