@@ -109,6 +109,7 @@ class DailyBatchTaskTest(unittest.TestCase):
             "末日之书",
             "领取任务奖励",
             "领取通行证",
+            "领取通关礼包",
             "领取邮件",
             "领取成就奖励",
             # Leo 2026-10-03: the red-badged 活动 pages, after the mail.

@@ -608,5 +608,8 @@
  "「只刷普通难度」已关掉，想只打普通战斗再打开。「挑战战斗最高关卡」可选第5、10、15关，推到后剩下的AP用快速战斗刷这一关。": "\"Normal only\" is now off; turn it on if you only want Normal. \"Challenge highest stage\" can be 5, 10 or 15; once reached, leftover AP quick-battles that stage.",
  "领取成就奖励": "Claim achievement rewards",
  "打开成就页，一键领取成就经验，再到成就等级页领取等级奖励（钻石）。": "Opens Achievements, claims all achievement EXP, then claims the Achievement Level rewards (Dia).",
- "成就奖励": "Achievements"
+ "成就奖励": "Achievements",
+ "领取通关礼包": "Claim clear packs",
+ "打开付费商店，在有红点的分页和礼包里只点「免费」，领通关剧情游戏卡/欲望之塔送的钻石（绝不点购买）。": "Opens the Paid Shop and, in red-badged tabs and packs, presses only \"Free\" to collect the Dia for cleared story cards and Tower of Desire floors (never Buy).",
+ "通关礼包": "Clear packs"
 }

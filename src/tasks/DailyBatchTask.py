@@ -29,6 +29,7 @@ from src.tasks.RedemptionTowerTask import RedemptionTowerTask
 from src.tasks.RestaurantTask import RestaurantStoneTask
 from src.tasks.RewardClaimTasks import (
     AchievementRewardTask,
+    ClearPackRewardTask,
     MailRewardTask,
     MissionRewardTask,
     PassRewardTask,
@@ -162,6 +163,8 @@ DAILY_BATCH_CHILDREN = (
     # 收尾：先领任务奖励，再领通行证（通行证任务依赖每日任务完成数），再收邮件。
     DailyBatchChild("领取任务奖励", MissionRewardTask),
     DailyBatchChild("领取通行证", PassRewardTask),
+    # 2026-10-24: the free 100 钻石 of each cleared card come by mail.
+    DailyBatchChild("领取通关礼包", ClearPackRewardTask),
     DailyBatchChild("领取邮件", MailRewardTask),
     # 2026-10-23: 成就经验 fills 成就等级, whose levels pay 钻石.
     DailyBatchChild("领取成就奖励", AchievementRewardTask),

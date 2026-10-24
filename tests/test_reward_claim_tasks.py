@@ -1,12 +1,23 @@
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+import cv2
 import numpy as np
 
+from src.tasks.claim_page import find_red_badges
 from src.tasks.RewardClaimTasks import (
     ACHIEVEMENT_LEVEL_TAB_POINT,
+    SHOP_FREE_ICON_ABOVE_TEXT,
+    SHOP_PACK_BADGE_STRIP,
+    SHOP_PACK_BADGE_TO_CENTER,
+    SHOP_PACK_SCROLL_ROUNDS,
+    SHOP_PACK_X,
+    SHOP_TAB_BADGE_STRIP,
+    SHOP_TAB_BADGE_TO_CENTER,
     AchievementRewardTask,
+    ClearPackRewardTask,
     PASS_BADGE_STRIP,
     PASS_BADGE_TO_CARD_CENTER,
     PASS_LEVEL_TAB_POINT,
@@ -19,10 +30,10 @@ def box(name, y=0):
     return SimpleNamespace(name=name, x=330, y=y, width=180, height=30)
 
 
-def badged_frame(badge_ys):
+def badged_frame(badge_ys, strip=PASS_BADGE_STRIP):
     """A 1080p frame with a red ◆! badge at each reference y."""
     frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
-    x = PASS_BADGE_STRIP[0] + 20
+    x = strip[0] + 20
     for y in badge_ys:
         frame[y - 8 : y + 8, x : x + 17] = (0, 0, 230)
     return frame
@@ -236,3 +247,58 @@ class ClickUntilChangedTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+CLEAR_PACK_FIXTURE = Path(__file__).parent / "fixtures" / "reward_claim" / "clear_pack_free.jpg"
+
+
+class ClearPackBadgeTest(unittest.TestCase):
+    """Live 2026-10-24: 付费商店 → 通关礼包, 卡15 困难 cleared, its pack badged."""
+
+    def test_live_frame_badges(self):
+        frame = cv2.imread(str(CLEAR_PACK_FIXTURE))
+        self.assertEqual(1, len(find_red_badges(frame, SHOP_TAB_BADGE_STRIP)))
+        tab_y = find_red_badges(frame, SHOP_TAB_BADGE_STRIP)[0]
+        # The 通关礼包 tab is the third icon, centred at y≈345.
+        self.assertLess(abs(tab_y + SHOP_TAB_BADGE_TO_CENTER - 345), 8)
+        packs = find_red_badges(frame, SHOP_PACK_BADGE_STRIP)
+        self.assertEqual(1, len(packs))
+        # The 困难 3 pack, centred at y≈495.
+        self.assertLess(abs(packs[0] + SHOP_PACK_BADGE_TO_CENTER - 495), 8)
+
+
+class ClearPackClaimTest(unittest.TestCase):
+    def _task(self, free_reads):
+        task = object.__new__(ClearPackRewardTask)
+        task.name = "领取通关礼包"
+        task.info = {}
+        task.info_set = lambda key, value: task.info.__setitem__(key, value)
+        task.logs = []
+        task.log_info = lambda text, **_kwargs: task.logs.append(text)
+        task.clicks = []
+        task._click_reference = lambda x, y, **_kwargs: task.clicks.append((x, y))
+        reads = iter(free_reads)
+        task._wait_boxes = lambda *_args, **_kwargs: next(reads, [])
+        return task
+
+    def test_only_exact_free_is_pressed_above_its_caption(self):
+        contents = SimpleNamespace(name="免费钻石500", x=1100, y=560, width=300, height=30)
+        free = SimpleNamespace(name="免费", x=1350, y=715, width=40, height=30)
+        task = self._task([[contents, free], [contents]])
+        self.assertEqual(1, ClearPackRewardTask._press_free_buttons(task, "困难3"))
+        self.assertEqual([(1370, 730 - SHOP_FREE_ICON_ABOVE_TEXT)], task.clicks)
+
+    def test_pack_without_free_presses_nothing(self):
+        task = self._task([[SimpleNamespace(name="购买", x=1300, y=700, width=60, height=30)]])
+        self.assertEqual(0, ClearPackRewardTask._press_free_buttons(task, "困难1"))
+        self.assertEqual([], task.clicks)
+
+    def test_stale_badge_opens_each_pack_once(self):
+        task = self._task([[SimpleNamespace(name="免费", x=1350, y=715, width=40, height=30)]])
+        task.capture_frame = lambda: badged_frame([468], SHOP_PACK_BADGE_STRIP)
+        task._pack_caption = lambda _frame, _y: "剧情游戏卡（困难）通关礼包3"
+        task.scrolls = 0
+        task.scroll_client = lambda *_args, **_kwargs: setattr(task, "scrolls", task.scrolls + 1)
+        self.assertEqual(1, ClearPackRewardTask._claim_badged_packs(task))
+        self.assertEqual((SHOP_PACK_X, 468 + SHOP_PACK_BADGE_TO_CENTER), task.clicks[0])
+        self.assertEqual(SHOP_PACK_SCROLL_ROUNDS, task.scrolls)

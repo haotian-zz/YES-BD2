@@ -39,6 +39,7 @@ HINTS_KEPT = {
     "MissionRewardTask": (),
     "MailRewardTask": (),
     "AchievementRewardTask": (),
+    "ClearPackRewardTask": (),
 }
 
 

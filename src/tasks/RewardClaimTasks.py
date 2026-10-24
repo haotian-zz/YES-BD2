@@ -1,4 +1,4 @@
-"""Mail, mission-reward, pass-reward and achievement claim tasks (日常收尾).
+"""Mail, mission-reward, pass-reward, achievement and clear-pack claim tasks (日常收尾).
 
 Entry points and page layouts were calibrated on the 简体 client, 2026-09-25;
 see ``claim_page`` for the shared page flow.
@@ -68,6 +68,32 @@ PASS_MISSION_TAB_POINT = (1593, 678)
 # A pass opened this many times and still badged is left (its badge is for
 # something 全部获得 does not claim).
 PASS_MAX_VISITS = 2
+
+# Live 2026-10-24: 付费商店's 通关礼包 tab lists one pack per 5 story cards per
+# difficulty (and per 10 欲望之塔 floors).  Each cleared card/floor has a free
+# 100 钻石 tier with a 「免费」 gift button; the paid tier next to it is never
+# touched.  A tab or pack with something free carries a red ◆「!」.
+SHOP_ENTRY_POINT = (1097, 1000)
+SHOP_TITLE_KEYWORDS = ("礼包",)
+SHOP_TAB_BADGE_STRIP = (180, 110, 60, 500)
+SHOP_TAB_X = 174
+SHOP_TAB_BADGE_TO_CENTER = 22
+SHOP_PACK_BADGE_STRIP = (395, 110, 60, 960)
+SHOP_PACK_X = 330
+SHOP_PACK_BADGE_TO_CENTER = 27
+# The pack caption sits under its picture.
+SHOP_PACK_CAPTION_BELOW_BADGE = (40, 85)
+SHOP_PACK_CAPTION_X = (230, 210)
+# Right half of the pack panel (the 购买 button is at x≈655 and never inside).
+SHOP_FREE_ROI = (1180, 150, 560, 640)
+SHOP_FREE_TEXT = "免费"
+# The caption is under the gift icon; press the icon.
+SHOP_FREE_ICON_ABOVE_TEXT = 30
+SHOP_PACK_SCROLL_POINT = (330 / 1920, 800 / 1080)
+SHOP_PACK_SCROLL_ROUNDS = 2
+SHOP_MAX_TABS = 5
+SHOP_MAX_PACKS = 12
+SHOP_MAX_FREE_PER_PACK = 5
 
 
 class _ClaimTaskBase(ClaimPageMixin, BaseBD2Task):
@@ -316,8 +342,124 @@ class PassRewardTask(_ClaimTaskBase):
         # their badge with a grey button on LEVEL; the claimable rewards were
         # finished missions on the MISSION tab, which in turn give pass EXP
         # and so new LEVEL rewards.
-        self._click_reference(*PASS_MISSION_TAB_POINT, after_sleep=1.0)
+        self._click_reference(*PASS_MISSION_TAB_POINT, after_sleep=1.0)  # 不用确认：没切过去就是在等级页再领一次
         if not self._claim_all(f"{key}任务", PASS_CLAIM_BUTTON, PASS_TITLE_KEYWORDS):
             return False
-        self._click_reference(*PASS_LEVEL_TAB_POINT, after_sleep=1.0)
+        self._click_reference(*PASS_LEVEL_TAB_POINT, after_sleep=1.0)  # 不用确认：红点留着，下一轮再开这张
         return self._claim_all(f"{key}等级", PASS_CLAIM_BUTTON, PASS_TITLE_KEYWORDS)
+
+
+class ClearPackRewardTask(_ClaimTaskBase):
+    """2026-10-24: every story card cleared on 普通/困难/极难 and every 10th
+    欲望之塔 floor gives 100 钻石 for free from its 通关礼包 in 付费商店.  Open
+    each red-badged tab and pack and press only the 「免费」 buttons."""
+
+    claim_log_name = "clear_pack"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.name = "领取通关礼包"
+        self.description = (
+            "打开付费商店，在有红点的分页和礼包里只点「免费」，"
+            "领通关剧情游戏卡/欲望之塔送的钻石（绝不点购买）。"
+        )
+        self.icon = FluentIcon.SHOPPING_CART
+
+    def run_claim(self) -> bool:
+        if not self._open_page_from_home("付费商店", SHOP_ENTRY_POINT, SHOP_TITLE_KEYWORDS):
+            return self._claim_fail("打开付费商店")
+        claimed = 0
+        opened_tabs: set[int] = set()
+        for _tab in range(SHOP_MAX_TABS):
+            badges = [
+                y
+                for y in find_red_badges(self.capture_frame(), SHOP_TAB_BADGE_STRIP)
+                if y not in opened_tabs
+            ]
+            self.info_set("付费商店分页红点", ",".join(str(y) for y in badges) or "-")
+            if not badges:
+                break
+            badge_y = badges[0]
+            # A tab's badge can outlive its last free reward (seen right after
+            # a claim), so each badged tab is opened once.
+            opened_tabs.add(badge_y)
+            self._click_reference(SHOP_TAB_X, badge_y + SHOP_TAB_BADGE_TO_CENTER, after_sleep=1.5)  # 不用确认：接着读礼包红点
+            claimed += self._claim_badged_packs()
+        self.info_set("通关礼包领取", claimed)
+        if claimed:
+            self.log_info(f"通关礼包：点了 {claimed} 次「免费」，钻石发到邮箱。")
+        else:
+            self.log_info("通关礼包：没有可以免费领的。")
+        if not self._leave_to_home("付费商店", SHOP_TITLE_KEYWORDS):
+            return self._claim_fail("付费商店返回主页")
+        return True
+
+    def _claim_badged_packs(self) -> int:
+        """Open every red-badged pack of this tab, scrolling down the list."""
+        claimed = 0
+        opened: set[str] = set()
+        scrolls = 0
+        for _step in range(SHOP_MAX_PACKS + SHOP_PACK_SCROLL_ROUNDS):
+            frame = self.capture_frame()
+            target = None
+            for badge_y in find_red_badges(frame, SHOP_PACK_BADGE_STRIP):
+                key = self._pack_caption(frame, badge_y) or f"y{badge_y}@{scrolls}"
+                if key not in opened:
+                    target = (badge_y, key)
+                    break
+            if target is None:
+                if scrolls >= SHOP_PACK_SCROLL_ROUNDS:
+                    break
+                scrolls += 1
+                self.scroll_client(
+                    SHOP_PACK_SCROLL_POINT, -1, count=10, interval=0.05, after_sleep=0.8
+                )
+                continue
+            badge_y, key = target
+            opened.add(key)
+            self.info_set("当前阶段", f"通关礼包：{key}")
+            self._click_reference(SHOP_PACK_X, badge_y + SHOP_PACK_BADGE_TO_CENTER, after_sleep=2.0)  # 不用确认：接着等「免费」
+            claimed += self._press_free_buttons(key)
+        return claimed
+
+    def _pack_caption(self, frame, badge_y: int) -> str:
+        top, bottom = SHOP_PACK_CAPTION_BELOW_BADGE
+        x, w = SHOP_PACK_CAPTION_X
+        boxes = self._reference_boxes(frame, (x, badge_y + top, w, bottom - top), "通关礼包名")
+        return to_simplified(self._boxes_text(boxes)).strip()
+
+    @staticmethod
+    def _only_free(boxes: list) -> list:
+        # Exactly 「免费」: the pack contents line can read 「免费钻石500」.
+        return [
+            box
+            for box in boxes
+            if to_simplified(str(getattr(box, "name", ""))).strip() == SHOP_FREE_TEXT
+        ]
+
+    def _free_boxes(self) -> list:
+        # The pack panel draws a moment after the click; wait for a 「免费」.
+        boxes = self._wait_boxes(
+            SHOP_FREE_ROI,
+            "通关礼包免费",
+            lambda found: bool(self._only_free(found)),
+            timeout=3.0,
+            reference=True,
+        )
+        return self._only_free(boxes)
+
+    def _press_free_buttons(self, key: str) -> int:
+        pressed = 0
+        for _press in range(SHOP_MAX_FREE_PER_PACK):
+            boxes = self._free_boxes()
+            if not boxes:
+                break
+            box = boxes[0]
+            self.log_info(f"通关礼包「{key}」：点「免费」。")
+            self._click_reference(
+                round(box.x + box.width / 2),
+                round(box.y + box.height / 2) - SHOP_FREE_ICON_ABOVE_TEXT,
+                after_sleep=2.0,
+            )  # 不用确认：下一轮重读「免费」还在不在
+            pressed += 1
+        return pressed
