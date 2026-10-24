@@ -3562,7 +3562,7 @@ class TradeMerchantNavigationTest(unittest.TestCase):
             vision,
             operate_click=lambda x, y, after_sleep=0: events.append(("click", x, y, after_sleep)),
         )
-        navigator._area_map_open = lambda _seconds: "map"
+        navigator._area_map_kind = lambda _seconds: "map"
         navigator._confirm_travel = lambda: events.append("confirm_travel") or "moving"
 
         self.assertTrue(navigator._walk_via_area_map())
@@ -3586,7 +3586,7 @@ class TradeMerchantNavigationTest(unittest.TestCase):
             click_template=lambda spec, *_args, **_kwargs: looked.append(spec) or False
         )
         navigator = self._navigator(vision, operate_click=lambda *_args, **_kwargs: None)
-        navigator._area_map_open = lambda _seconds: "map"
+        navigator._area_map_kind = lambda _seconds: "map"
         navigator._confirm_travel = lambda: self.fail("no travel without the merchant icon")
 
         self.assertFalse(navigator._walk_via_area_map())
@@ -3603,7 +3603,7 @@ class TradeMerchantNavigationTest(unittest.TestCase):
         navigator = self._navigator(
             vision, operate_click=lambda x, y, after_sleep=0: clicks.append((x, y))
         )
-        navigator._area_map_open = lambda _seconds: "square"
+        navigator._area_map_kind = lambda _seconds: "square"
         navigator._confirm_travel = lambda: "moving"
 
         self.assertTrue(navigator._walk_via_area_map())
@@ -3619,7 +3619,7 @@ class TradeMerchantNavigationTest(unittest.TestCase):
             operate_click=lambda *_a, **_k: None,
             tap_key=lambda key, after_sleep=0.0: keys.append(key) or True,
         )
-        navigator._area_map_open = lambda _seconds: next(opened)
+        navigator._area_map_kind = lambda _seconds: next(opened)
         navigator._confirm_travel = lambda: "moving"
 
         self.assertTrue(navigator._walk_via_area_map())

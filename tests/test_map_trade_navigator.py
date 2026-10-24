@@ -1026,7 +1026,7 @@ class NavigatorTest(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertEqual(ScreenState.SANDBOX, result.state)
-        self.assertIn("不用传送阵技能", result.message)
+        self.assertIn("人不在可用的传送阵上", result.message)
         self.assertEqual([], clicks)
         self.assertFalse(hasattr(navigator, "_click_sandbox_teleport_skill"))
 

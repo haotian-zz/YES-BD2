@@ -3665,19 +3665,28 @@ class PvpFreeCocktailGuardTest(unittest.TestCase):
         self.assertFalse(PVPTask._verify_free_cost(task, 10, 2))
 
     def test_unread_number_is_named_with_what_was_read(self):
-        # Player v0.2.11 2026-10-24: the message could not say which number failed.
+        # Player v0.2.11 2026-10-24: the message could not say which number
+        # failed, then Leo 「錯誤要寫原因 不要寫讀不到」.
         task = self._task("10倍战斗开始10", "+1.42K", "自动战斗 2次")
         self.assertFalse(PVPTask._verify_free_cost(task, 10, 2))
         message = task.log_warning.call_args.args[0]
-        self.assertIn("免费鸡尾酒数（右上角读到：+1.42K）", message)
-        self.assertNotIn("每场消耗（", message)
-        self.assertNotIn("场数（", message)
+        self.assertIn("右上角读到「+1.42K」，里面没有「数字/40」", message)
+        self.assertNotIn("战斗开始」按钮", message)
+        self.assertNotIn("场数", message)
+        self.assertNotIn("读不到", message)
 
         task = self._task("战斗开始", "36/40", "")
         self.assertFalse(PVPTask._verify_free_cost(task, 10, 2))
         message = task.log_warning.call_args.args[0]
-        self.assertIn("每场消耗（战斗开始按钮读到：战斗开始 | 战斗开始）", message)
-        self.assertIn("场数（读到：-）", message)
+        self.assertIn("「战斗开始」按钮上没认出每场花几杯（读到：战斗开始 | 战斗开始）", message)
+        self.assertIn("没认出「自动战斗N次」的场数（读到：没有字）", message)
+
+    def test_over_99_free_cocktails_says_why_it_does_not_fight(self):
+        # Player v0.2.11 2026-10-24: 273/40; Leo kept the 99 limit 「但要說明原因」.
+        task = self._task("10倍战斗开始10", "273/40 +1.18K", "自动战斗 2次")
+        self.assertFalse(PVPTask._verify_free_cost(task, 10, 2))
+        message = task.log_warning.call_args.args[0]
+        self.assertIn("右上角读到 273/40，免费鸡尾酒超过 99 个，工具只认得 99 个以内", message)
 
     def test_wrong_multiplier_count_or_unreadable_text_is_refused(self):
         self.assertFalse(
