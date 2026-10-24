@@ -36,6 +36,7 @@ from src.tasks.RewardClaimTasks import (
 )
 from src.tasks.run_history import day_start_ts
 from src.tasks.SquareGoddessTask import SquareGoddessTask
+from src.tasks.TalentStarUpTask import TalentStarUpTask
 from src.tasks.task_notifications import (
     log_task_completion,
     suppress_task_completion_notifications,
@@ -148,6 +149,9 @@ DAILY_BATCH_CHILDREN = (
     DailyBatchChild("自动PVP", PVPTask),
     DailyBatchChild("广场女神像", SquareGoddessTask),
     DailyBatchChild("跑商", MapTradeTask),
+    # 2026-10-24: 料理/砍价 fill their talents in 跑商, the map run the
+    # rest; star up the full ones the scripts use (user: only those).
+    DailyBatchChild("天赋升星", TalentStarUpTask),
     DailyBatchChild("活动每日战斗", EventBattleTask),
     # 恶魔城 救赎之塔 快速战斗 (Leo 2026-10-21).
     DailyBatchChild("救赎之塔", RedemptionTowerTask),

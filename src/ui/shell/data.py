@@ -36,6 +36,7 @@ CHILD_META = {
     "自动PVP": ("镜中之战", "swords", "fight"),
     "广场女神像": ("广场女神像", "landmark", "grow"),
     "跑商": ("每日跑商", "coins", "trade"),
+    "天赋升星": ("天赋升星", "book-open", "grow"),
     "每周跑图": ("每周跑图", "map", "map"),
     "活动每日战斗": ("活动战斗", "zap", "fight"),
     "救赎之塔": ("救赎之塔", "castle", "fight"),

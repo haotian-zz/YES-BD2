@@ -98,6 +98,7 @@ class DailyBatchTaskTest(unittest.TestCase):
             "自动PVP",
             "广场女神像",
             "跑商",
+            "天赋升星",
             "活动每日战斗",
             # Leo 2026-10-21: 恶魔城 救赎之塔 快速战斗.
             "救赎之塔",

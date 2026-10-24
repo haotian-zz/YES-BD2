@@ -611,5 +611,7 @@
  "成就奖励": "Achievements",
  "领取通关礼包": "Claim clear packs",
  "打开付费商店，在有红点的分页和礼包里只点「免费」，领通关剧情游戏卡/欲望之塔送的钻石（绝不点购买）。": "Opens the Paid Shop and, in red-badged tabs and packs, presses only \"Free\" to collect the Dia for cleared story cards and Tower of Desire floors (never Buy).",
- "通关礼包": "Clear packs"
+ "通关礼包": "Clear packs",
+ "天赋升星": "Talent star-up",
+ "进最近的卡带，按 Q 打开天赋技能，日常脚本用到的天赋（探查/吸收/召集/制伏/料理/砍价）经验满了就升星（每次花 1 本技能书和金币），其他天赋不动。": "Enters the recent cartridge and opens Talent Skills with Q; talents the daily scripts use (Search/Absorb/Summon/Subdue/Cooking/Bargain) are starred up once their EXP is full (1 skill book plus gold each). Other talents are left alone."
 }
