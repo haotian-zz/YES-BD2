@@ -9,6 +9,8 @@ from src.tasks.RewardClaimTasks import (
     AchievementRewardTask,
     PASS_BADGE_STRIP,
     PASS_BADGE_TO_CARD_CENTER,
+    PASS_LEVEL_TAB_POINT,
+    PASS_MISSION_TAB_POINT,
     PassRewardTask,
 )
 
@@ -39,7 +41,7 @@ class PassBadgeTest(unittest.TestCase):
         task.info_set = lambda key, value: task.info.__setitem__(key, value)
         task.logs = []
         task.log_info = lambda text, **_kwargs: task.logs.append(text)
-        task.state = {"scrolls": 0, "claims": []}
+        task.state = {"scrolls": 0, "claims": [], "all_claims": []}
         task.capture_frame = lambda: badged_frame(screens(task.state)[0])
         task._roi_boxes = lambda _frame, _roi, _name: screens(task.state)[1]
         task._wait_boxes = lambda _roi, _name, _ok, timeout=0: screens(task.state)[1]
@@ -53,7 +55,10 @@ class PassBadgeTest(unittest.TestCase):
         task._click_until_changed = lambda _label, click, _rois, **_kwargs: click() or True
 
         def fake_claim(label, button, _title):
-            task.state["claims"].append(label)
+            task.state["all_claims"].append(label)
+            # Tab claims are checked in their own test; keep one per pass here.
+            if not label.endswith(("任务", "等级")):
+                task.state["claims"].append(label)
             return claim_ok
 
         task._claim_all = fake_claim
@@ -76,8 +81,20 @@ class PassBadgeTest(unittest.TestCase):
         self.assertTrue(PassRewardTask.run_claim(task))
         self.assertEqual(["基础通行证", "服装通行证"], task.state["claims"])
         self.assertEqual(
-            [(425, 255 + PASS_BADGE_TO_CARD_CENTER), (425, 469 + PASS_BADGE_TO_CARD_CENTER)],
+            [
+                (425, 255 + PASS_BADGE_TO_CARD_CENTER),
+                PASS_MISSION_TAB_POINT,
+                PASS_LEVEL_TAB_POINT,
+                (425, 469 + PASS_BADGE_TO_CARD_CENTER),
+                PASS_MISSION_TAB_POINT,
+                PASS_LEVEL_TAB_POINT,
+            ],
             task.clicks,
+        )
+        self.assertEqual(
+            ["基础通行证", "基础通行证任务", "基础通行证等级",
+             "服装通行证", "服装通行证任务", "服装通行证等级"],
+            task.state["all_claims"],
         )
         self.assertEqual([True], task.left)
         self.assertEqual(2, task.info["通行证数量"])
@@ -109,6 +126,8 @@ class PassBadgeTest(unittest.TestCase):
     def test_claim_that_stays_lit_fails_the_task(self):
         task = self._task(lambda _state: ([255], [box("基础通行证", 300)]), claim_ok=False)
         self.assertFalse(PassRewardTask.run_claim(task))
+        # A failed LEVEL claim stops before touching the tabs.
+        self.assertEqual(["基础通行证"], task.state["all_claims"])
         self.assertEqual([], task.left)
         self.assertIn("基础通行证", task.info["状态"])
 

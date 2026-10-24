@@ -62,6 +62,9 @@ PASS_CARD_HALF_SIZE = (110, 50)
 # Only the right half of the panel: the purchase button sits at (729, 765).
 PASS_CLAIM_BUTTON = ClaimButton((1150, 700, 450, 130), ("全部获得", "全部领取"))
 PASS_MAX_CARDS = 6
+# Every pass has LEVEL / MISSION tabs on the right edge (live 2026-10-24).
+PASS_LEVEL_TAB_POINT = (1593, 402)
+PASS_MISSION_TAB_POINT = (1593, 678)
 # A pass opened this many times and still badged is left (its badge is for
 # something 全部获得 does not claim).
 PASS_MAX_VISITS = 2
@@ -307,4 +310,14 @@ class PassRewardTask(_ClaimTaskBase):
             # button is grey and nothing is pressed; the badge stays and the
             # card is opened again on the next look.
             self.log_info(f"通行证「{key}」：点了画面没变化，按已打开处理。")
-        return self._claim_all(key, PASS_CLAIM_BUTTON, PASS_TITLE_KEYWORDS)
+        if not self._claim_all(key, PASS_CLAIM_BUTTON, PASS_TITLE_KEYWORDS):
+            return False
+        # Live 2026-10-24: the 艾瑞克 character pass and the return pass kept
+        # their badge with a grey button on LEVEL; the claimable rewards were
+        # finished missions on the MISSION tab, which in turn give pass EXP
+        # and so new LEVEL rewards.
+        self._click_reference(*PASS_MISSION_TAB_POINT, after_sleep=1.0)
+        if not self._claim_all(f"{key}任务", PASS_CLAIM_BUTTON, PASS_TITLE_KEYWORDS):
+            return False
+        self._click_reference(*PASS_LEVEL_TAB_POINT, after_sleep=1.0)
+        return self._claim_all(f"{key}等级", PASS_CLAIM_BUTTON, PASS_TITLE_KEYWORDS)
