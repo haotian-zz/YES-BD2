@@ -129,6 +129,7 @@ COOKING_MAX_FIXED_POINT = (480, 588)
 # still read on 2 frames the same press is repeated once.
 COOKING_RECLICK_AFTER = 3.0
 COOKING_RECLICK_HITS = 2
+COOKING_OWNED_PATTERN = re.compile(r"拥有\D{0,3}(\d+)")
 
 # Practice: when none of the chosen dishes could be cooked, cook this many of
 # the first dish the list shows bright, for the skill's EXP (user 2026-10-24:
@@ -223,6 +224,13 @@ class CookingDetailSnapshot:
     start_match: MatchResult
     enabled: bool
     bright_ratio: float
+    # 「拥有N个食物」 under the dish name, None when unread.
+    owned: int | None = None
+
+
+def _owned(text: str) -> int | None:
+    found = COOKING_OWNED_PATTERN.search(str(text or "").replace(",", ""))
+    return int(found.group(1)) if found else None
 
 
 def _character_coverage(expected: str, observed: str) -> float:
@@ -597,6 +605,7 @@ class CookingFlowMixin:
                 f"pixel={ready.start_match.pixel_score:.3f}"
             ),
         )
+        self._owned_before = ready.owned
         self.vision.click_client(
             ready.start_match.center,
             ready.frame.shape,
@@ -606,7 +615,9 @@ class CookingFlowMixin:
             self.task.log_warning(f"料理：{recipe} 点击后未确认制作按钮变灰。")
             self._recover_cooking_list()
             return CookingRecipeOutcome.FAILED
-        if self._wait_for_cooking_result(recipe, COOKING_COMPLETION_TIMEOUT) is None:
+        if not self._cooked_by_count(recipe) and (
+            self._wait_for_cooking_result(recipe, COOKING_COMPLETION_TIMEOUT) is None
+        ):
             self.task.log_warning(f"料理：{recipe} 制作超时，未确认结果条。")
             self._recover_cooking_list()
             return CookingRecipeOutcome.FAILED
@@ -650,12 +661,15 @@ class CookingFlowMixin:
             self._recover_cooking_list()
             return False
         self.task.log_info(f"料理：选中的料理都做不了，先做 {name} 约 {max(1, count)} 份练料理技能。")
+        self._owned_before = ready.owned
         self.vision.click_client(ready.start_match.center, ready.frame.shape, after_sleep=0.0)  # 不用确认：下面等制作按钮变灰
         if not self._wait_for_cooking_started(name, COOKING_START_TIMEOUT):
             self.task.log_warning(f"料理：{name} 点击后未确认制作按钮变灰。")
             self._recover_cooking_list()
             return False
-        if self._wait_for_cooking_result(name, COOKING_COMPLETION_TIMEOUT) is None:
+        if not self._cooked_by_count(name) and (
+            self._wait_for_cooking_result(name, COOKING_COMPLETION_TIMEOUT) is None
+        ):
             self._recover_cooking_list()
             return False
         trade_detail.note_dish(self, name, getattr(self, "_last_cooking_result_text", ""))
@@ -884,7 +898,7 @@ class CookingFlowMixin:
                 f"pixel={start.pixel_score:.3f}; bright={bright_ratio:.3f}"
             ),
         )
-        return CookingDetailSnapshot(frame, start, enabled, bright_ratio)
+        return CookingDetailSnapshot(frame, start, enabled, bright_ratio, _owned(self.vision.simplify(name)))
 
     def _generic_cooking_detail_snapshot(self, frame=None) -> CookingDetailSnapshot | None:
         frame = self.vision.capture() if frame is None else frame
@@ -941,10 +955,18 @@ class CookingFlowMixin:
         end_at = started + max(0.0, timeout)
         bright_hits = 0
         reclicked = False
+        before = getattr(self, "_owned_before", None)
+        self._owned_gain = 0
         while True:
             detail = self._cooking_detail_snapshot(recipe)
             if detail is not None and detail.bright_ratio < COOKING_START_ENABLED_BRIGHT_RATIO:
                 self._status("料理状态", f"{recipe} 制作按钮已变灰")
+                return True
+            # Live 2026-10-25: 50 蘑菇汤 were made within one 2 s look; the
+            # grey button was never read, and a re-press made one more.
+            if before is not None and detail is not None and (detail.owned or 0) > before:
+                self._owned_gain = detail.owned - before
+                self._status("料理状态", f"{recipe} 已做完：拥有 {before} → {detail.owned}")
                 return True
             if monotonic() >= end_at:
                 return False
@@ -963,6 +985,14 @@ class CookingFlowMixin:
                     detail.start_match.center, detail.frame.shape, after_sleep=0.0
                 )
             self.task.sleep(COOKING_POLL_INTERVAL)
+
+    def _cooked_by_count(self, recipe: str) -> bool:
+        """Done already when the owned count went up; the result bar may be gone."""
+        gain = int(getattr(self, "_owned_gain", 0) or 0)
+        if gain <= 0:
+            return False
+        self._last_cooking_result_text = f"{recipe}×{gain}"
+        return True
 
     def _wait_for_cooking_result(self, recipe: str, timeout: float):
         end_at = monotonic() + max(0.0, timeout)
