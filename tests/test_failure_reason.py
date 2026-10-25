@@ -98,6 +98,17 @@ class EnsureTest(unittest.TestCase):
         self.assertEqual(text, task.info["当前阶段"])
         task.log_warning.assert_called_once()
 
+    def test_an_ocr_second_look_note_is_not_the_reason(self):
+        # Player 2026-10-24: the 问题摘要 gave the OCR's own note as the cause.
+        task = SimpleNamespace(name="快速狩猎", _why="", info={"状态": "快速狩猎：失败。"})
+        task.info_set = lambda key, value: task.info.__setitem__(key, value)
+        task.log_warning = mock.Mock()
+        lines = [
+            (1.0, 20, "快速狩猎：未找到可点击 OCR 目标：选择金币航线"),
+            (2.0, 20, "OCR 快速狩猎主页抽抽乐 x1：第一次没读到，加边放大 1 倍后读到"),
+        ]
+        self.assertEqual("失败：未找到可点击 OCR 目标：选择金币航线", self._ensure(task, lines))
+
     def test_a_noted_reason_comes_first(self):
         task = self._task("白嫖抽抽乐：领取失败。", why="按钮一直亮着")
         self.assertEqual("领取失败：按钮一直亮着", self._ensure(task, [(1.0, 20, "别的")]))

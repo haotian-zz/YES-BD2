@@ -47,7 +47,7 @@ def _task(dialogs):
 class FailClosedTest(unittest.TestCase):
     def test_no_template_means_a_gem_may_be_there(self):
         with mock.patch.object(event_module, "_diamond_template", None), mock.patch.object(
-            event_module.cv2, "imread", lambda *_a, **_k: None
+            event_module.image_io, "read", lambda *_a, **_k: None
         ):
             self.assertTrue(diamond_icon(_frame(), (CURRENCY_ROI,)))
             task = _task([[]])

@@ -71,6 +71,7 @@ from src.utils.pvp_dialog import (
     step_moves,
     steps_between,
     parse_battle_count,
+    free_cocktails_problem,
     parse_free_cocktails,
     parse_multiplier,
     parse_start_cost,
@@ -845,13 +846,14 @@ class PVPTask(BaseBD2Task):
                             if action_name in ("赛季奖励", FIEND_HUNT_REWARD_TITLE)
                             else PVP_RANK_PAGE_AFTER_CLICK_SECONDS
                         )
-                        self.operate_click(
+                        if self.press_dismiss(
                             max(0.0, min(1.0, point[0] / max(1, frame_width))),
                             max(0.0, min(1.0, point[1] / max(1, frame_height))),
-                            after_sleep=after_sleep,
-                        )
-                        handled.add(action_name)
-                        action_count += 1
+                            after_sleep,
+                            action_name,
+                        ):
+                            handled.add(action_name)
+                            action_count += 1
                         continue
                 # The hub artwork can remain visible behind these overlays. Never
                 # accept its template from a frame that contains a special page.
@@ -1591,6 +1593,7 @@ class PVPTask(BaseBD2Task):
     def _battle_count_value(self) -> int | None:
         text = self._ocr_text(self.capture_frame(), name="PVP 战斗次数", roi=PVP_COUNT_ROI)
         self.info_set("PVP 战斗次数 OCR", text or "-")
+        self._battle_count_text = text
         return parse_battle_count(text)
 
     def _set_battle_count(self, count: int) -> int | None:
@@ -1686,11 +1689,14 @@ class PVPTask(BaseBD2Task):
         def per_battle():
             return self._start_cost_on(self.capture_frame())
 
+        free_text = ""
+
         def free_pool():
-            text = self._ocr_text(
+            nonlocal free_text
+            free_text = self._ocr_text(
                 self.capture_frame(), name="PVP 免费鸡尾酒", roi=PVP_FREE_COCKTAIL_ROI
             )
-            return parse_free_cocktails(text)
+            return parse_free_cocktails(free_text)
 
         cost = self._read_until(per_battle)
         free = self._read_until(free_pool)
@@ -1707,8 +1713,22 @@ class PVPTask(BaseBD2Task):
         problems = []
         if not switch_on:
             problems.append("仅使用免费鲜血鸡尾酒未开启")
-        if cost is None or free is None or battles is None:
-            problems.append("读不到每场消耗、场数或免费鸡尾酒数")
+        # Which number and what was read go into the message (player v0.2.11
+        # 2026-10-24: 「读不到每场消耗、场数或免费鸡尾酒数」 could not say which).
+        # The reason, not just 「读不到」 (Leo 2026-10-24 「錯誤要寫原因」).
+        unread = []
+        if cost is None:
+            start_text = " | ".join(t for t in getattr(self, "_start_cost_texts", ()) or () if t)
+            unread.append(
+                f"「战斗开始」按钮上没认出每场花几杯（读到：{start_text or '没有字'}）"
+            )
+        if battles is None:
+            count_text = getattr(self, "_battle_count_text", "") or ""
+            unread.append(f"没认出「自动战斗N次」的场数（读到：{count_text or '没有字'}）")
+        if free is None:
+            unread.append(free_cocktails_problem(free_text))
+        if unread:
+            problems.extend(unread)
         else:
             if cost != multiplier:
                 problems.append(f"每场消耗 {cost} 不等于倍数 {multiplier}")
@@ -1736,6 +1756,7 @@ class PVPTask(BaseBD2Task):
         # A lone thin "1" after the cocktail icon is lost at 2K (live
         # 2026-09-29, 1x fallback): read the button enlarged as well.
         texts = []
+        self._start_cost_texts = texts
         for scale in (1.0, 2.0):
             text = self._ocr_text(
                 frame, name="PVP 战斗开始", roi=PVP_START_BUTTON_ROI, ocr_scale=scale

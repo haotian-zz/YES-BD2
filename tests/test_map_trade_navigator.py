@@ -879,7 +879,7 @@ class NavigatorTest(unittest.TestCase):
         navigator._travel_to_hunting_ground = lambda: "狩猎场"
         failed = NavigationResult(False, ScreenState.SANDBOX, "按 F 后也没打开传送阵地图")
         calls = []
-        navigator._open_teleport_map_at_hunting_ground = lambda: calls.append(1) or failed
+        navigator._open_teleport_map_at_hunting_ground = lambda _card=None: calls.append(1) or failed
 
         result = navigator.prepare_collection_main_area(card.card_id, via_hunting_ground=True)
 
@@ -1026,7 +1026,7 @@ class NavigatorTest(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertEqual(ScreenState.SANDBOX, result.state)
-        self.assertIn("不用传送阵技能", result.message)
+        self.assertIn("人不在可用的传送阵上", result.message)
         self.assertEqual([], clicks)
         self.assertFalse(hasattr(navigator, "_click_sandbox_teleport_skill"))
 
@@ -2380,6 +2380,7 @@ class LostPressTest(unittest.TestCase):
         closed = []
         navigator._close_confirmed_map_page = lambda *a, **k: closed.append(True)
         navigator._wait_auto_move_finished = lambda _timeout: self.fail("waited for a walk")
+        navigator._close_field_map_if_open = lambda: None
         navigator._click_sandbox_teleport_interaction = lambda **_k: self.fail(
             "waited for a prompt that never shows"
         )

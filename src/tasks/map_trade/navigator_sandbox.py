@@ -42,6 +42,9 @@ from src.tasks.map_trade.models import (
 )
 from src.tasks.map_trade.navigator_constants import (
     AREA_MAP_BACK_TEMPLATE,
+    AREA_MAP_FOOTER_KEYWORDS,
+    AREA_MAP_FOOTER_RELATIVE_ROI,
+    AREA_MAP_HEADER_TAGS,
     AREA_MAP_CHANGE_INTERVAL,
     AREA_MAP_CHANGE_TIMEOUT,
     AREA_MAP_CLICK_SETTLE_SECONDS,
@@ -67,6 +70,9 @@ from src.tasks.map_trade.navigator_constants import (
     MERCHANT_NAV_GUIDE_REFERENCE_POINT,
     MERCHANT_NAV_GUIDE_TEMPLATE,
     HUNTING_GROUND_NAV_ENTRY,
+    HUNTING_GROUND_PANEL_PAIR,
+    HUNTING_GROUND_MUST_STAND_ON_CIRCLE,
+    HUNTING_GROUND_PANEL_WORD,
     MERCHANT_NAV_TOAST_OCR_ROI,
     MERCHANT_NAV_UNREACHABLE_KEYWORD,
     MERCHANT_TRAVEL_DIALOG_KEYWORDS,
@@ -167,7 +173,7 @@ AUTO_MOVE_TEXT_RELATIVE_ROI = (560 / 1920, 80 / 1080, 1360 / 1920, 980 / 1080)
 # show once the player ticked 不再显示.
 AUTO_MOVE_QUESTION_KEYWORDS = ("是否自动移动", "前往所选目的地")
 AUTO_MOVE_CANCEL_TEXT = "取消"
-NOT_BY_CIRCLE_MESSAGE = "不在传送阵旁（没有交互按钮），不用传送阵技能"
+NOT_BY_CIRCLE_MESSAGE = "人不在可用的传送阵上（右下 F 键的手势没变绿）"
 # ≡-menu entries also found by a part of the name when one character is
 # misread (「狩猎扬」), on a box no longer than the name.
 NAV_ENTRY_NAMES = {"狩猎场": ("狩猎场", "狩猎", "猎场")}
@@ -1614,23 +1620,32 @@ class SandboxNavigationMixin:
         end_at = monotonic() + SANDBOX_NAVIGATION_MAP_TIMEOUT
         teleport = None
         teleport_frame = None
+        ever_confirmed = False
         while monotonic() <= end_at:
             frame = self.vision.capture()
             page_confirmed = self._sandbox_navigation_page_has_keyword(frame)
+            ever_confirmed = ever_confirmed or page_confirmed
             teleport = self._sandbox_navigation_teleport(frame) if page_confirmed else None
             if page_confirmed and teleport is not None:
                 teleport_frame = frame
                 break
             self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
         if teleport is None:
+            # Why, in the player's words (Leo 2026-10-24 「錯誤要寫原因 不要寫讀不到」).
+            why = (
+                "区域地图上找不到传送阵图标（这张地图可能没有已开启的传送阵，或被角色图标盖住）"
+                if ever_confirmed
+                else "点小地图后没看到区域地图（地图没打开，或标题和底栏都没对上）"
+            )
             self._close_confirmed_map_page(
                 {MapPageMode.SANDBOX_LARGE_MAP},
                 timeout=SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
             )
+            self._close_field_map_if_open()
             return NavigationResult(
                 False,
                 ScreenState.SANDBOX_MAP,
-                "未在已确认箱庭大地图同帧识别到唯一传送阵图标",
+                why,
                 map_page_mode=MapPageMode.SANDBOX_LARGE_MAP,
             )
 
@@ -1680,6 +1695,7 @@ class SandboxNavigationMixin:
                     {MapPageMode.SANDBOX_LARGE_MAP},
                     timeout=SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
                 )
+            self._close_field_map_if_open()
             return NavigationResult(
                 False,
                 ScreenState.UNKNOWN,
@@ -1735,7 +1751,9 @@ class SandboxNavigationMixin:
         # a circle on the area map or go through the ≡ menu.
         return NavigationResult(False, ScreenState.SANDBOX, NOT_BY_CIRCLE_MESSAGE)
 
-    def _open_teleport_map_at_hunting_ground(self) -> NavigationResult:
+    def _open_teleport_map_at_hunting_ground(
+        self, card: CardSpec | None = None
+    ) -> NavigationResult:
         """The teleport map right after the ≡ menu's 狩猎场 trip.  The trip
         always lands on the hunting ground's circle, so its hand is there
         even when it is not read (player 1080p 125% 2026-10-17, 第10章 回主城
@@ -1745,6 +1763,13 @@ class SandboxNavigationMixin:
         opened = self.open_teleport_map_from_sandbox()
         if opened.success or opened.message != NOT_BY_CIRCLE_MESSAGE:
             return opened
+        if getattr(self, "_already_in_hunting_ground", False):
+            # No trip was made: the character stands anywhere in the ground,
+            # so walk to its circle on the area map first.
+            walked = self._walk_to_sandbox_teleport_interaction()
+            if walked.success:
+                return walked
+            self._status("导航状态", f"走去狩猎场传送阵没成功（{walked.message}），改按 {INTERACT_KEY}")
         tap_key = getattr(self.task, "tap_key", None)
         if tap_key is None:
             return opened
@@ -1763,6 +1788,21 @@ class SandboxNavigationMixin:
         )
         if pressed.success:
             return pressed
+        if getattr(self, "_already_in_hunting_ground", False):
+            # 第10章 伯爵家宝库 (live clone 2026-10-23): circle and exit icons
+            # overlap, and beside the circle the area map does not start a
+            # walk.  Leo chose to skip the card and say what to do.
+            message = (
+                HUNTING_GROUND_MUST_STAND_ON_CIRCLE.get(card.card_id)
+                if card is not None
+                else None
+            ) or (
+                f"人在狩猎场里，点地图没能走到传送阵，按 {INTERACT_KEY} 也没打开传送阵地图"
+                "（请先让角色站到狩猎场的传送阵上再跑）"
+            )
+            return NavigationResult(
+                False, pressed.state, message, map_page_mode=pressed.map_page_mode
+            )
         return NavigationResult(
             False,
             pressed.state,
@@ -2464,7 +2504,7 @@ class SandboxNavigationMixin:
                 + (f"（{why}）" if (why := getattr(self, "_nav_failure", "")) else ""),
             )
         if entry == HUNTING_GROUND_NAV_ENTRY:
-            return self._open_teleport_map_at_hunting_ground()
+            return self._open_teleport_map_at_hunting_ground(card)
         # 艾琳 stands in the town: its circle, walking there if needed.
         if self._click_sandbox_teleport_interaction():
             return self._open_circle_page("传送阵交互按钮")
@@ -2512,10 +2552,25 @@ class SandboxNavigationMixin:
         field frame while the quick-switch button passed 0.97; 跑商 could not
         reach the merchant and 跑图 could not go home.  Any field signal now
         allows the fixed-place press (was the C/H/M/Q key caps only)."""
+        self._nav_button_miss = ""
         if self.vision.click_template(
             MERCHANT_NAV_GUIDE_TEMPLATE, timeout=MERCHANT_NAV_GUIDE_TIMEOUT, after_sleep=0.8
         ):
             return True
+        # The area map left open covers the ≡ button, and the fixed place
+        # lands on the map's own title row (player 1080p 2026-10-23, 第9章:
+        # the map stayed open and every later field press hit it).  Close
+        # the map first.
+        if self._area_map_open():
+            self._status("小地图导航", "区域地图还开着，先关掉再找≡按钮")
+            self._close_field_map()
+            if self.vision.click_template(
+                MERCHANT_NAV_GUIDE_TEMPLATE, timeout=MERCHANT_NAV_GUIDE_TIMEOUT, after_sleep=0.8
+            ):
+                return True
+            if self._area_map_open():
+                self._nav_button_miss = "区域地图按返回也关不掉，挡住了≡按钮"
+                return False
         frame = self.vision.capture()
         # Two key caps, as the field check: on the same sand the C cap
         # found nothing while H, M and Q passed.
@@ -2527,6 +2582,10 @@ class SandboxNavigationMixin:
             >= FIELD_KEYCAP_MIN_PASSES
         ) or self.classify(frame) == ScreenState.SANDBOX
         if not in_field:
+            self._nav_button_miss = (
+                "画面上看不到地图界面的按键提示（C、H、M、Q 至少要看到两个），"
+                "可能被别的画面或视窗盖住"
+            )
             return False
         self._status("小地图导航", "模板未命中，已确认在箱庭，点击标定位置")
         self.vision.click_reference(*MERCHANT_NAV_GUIDE_REFERENCE_POINT, after_sleep=0.8)
@@ -2542,11 +2601,28 @@ class SandboxNavigationMixin:
         # (player 1080p 2026-10-19: 第3章 tried the ≡ menu three times and
         # the report could not say why).
         self._nav_failure = ""
+        self._already_in_hunting_ground = False
+        if HUNTING_GROUND_NAV_ENTRY in entries and self._in_hunting_ground():
+            # Already in the hunting ground: no ≡ to press, its circle is
+            # here (Leo's rule 「不在三張圖 → 狩獵場 → 按傳送陣」, 2026-10-23).
+            self._status("导航状态", "已在狩猎场（小地图旁是狩猎场的栏），直接去按传送阵")
+            self.task.log_info("跑图：人已经在狩猎场，直接去按传送阵。")
+            self._already_in_hunting_ground = True
+            return HUNTING_GROUND_NAV_ENTRY
         if not self._open_minimap_nav_menu():
-            self._nav_failure = "没认出小地图的≡按钮"
+            why = getattr(self, "_nav_button_miss", "") or "≡按钮的样子和位置都没对上"
+            self._nav_failure = f"没按到小地图的≡按钮：{why}"
             self.task.log_warning(f"跑图：未识别到小地图导航按钮，无法前往{wanted}。")
             return None
         choice = self._nav_menu_choice(entries)
+        if choice is None and HUNTING_GROUND_NAV_ENTRY in entries and self._hunting_ground_panel(
+            getattr(self, "_nav_menu_texts", ())
+        ):
+            # The bar showed up only after the press (read too early above).
+            self._status("导航状态", "读到狩猎场的栏，人已在狩猎场，直接去按传送阵")
+            self.task.log_info("跑图：人已经在狩猎场，直接去按传送阵。")
+            self._already_in_hunting_ground = True
+            return HUNTING_GROUND_NAV_ENTRY
         if choice is None:
             seen = getattr(self, "_nav_menu_seen", "")
             self._nav_failure = f"≡菜单里没读到{wanted}" + (f"，读到：{seen}" if seen else "，什么字都没读到")
@@ -2608,10 +2684,28 @@ class SandboxNavigationMixin:
                 entry = next(item for item in entries if item in listed)
                 return entry, listed[entry], frame.shape
             if timed_out:
+                self._nav_menu_texts = tuple(texts)
                 self._nav_menu_seen = " ".join(texts)[:40]
                 return None
             seen = bool(listed)
             self.task.sleep(MERCHANT_NAV_MENU_OCR_INTERVAL)
+
+    @staticmethod
+    def _hunting_ground_panel(texts) -> bool:
+        """The texts are the hunting ground's own bar, not a ≡ menu."""
+        joined = "".join(texts)
+        return HUNTING_GROUND_PANEL_WORD in joined or all(
+            word in joined for word in HUNTING_GROUND_PANEL_PAIR
+        )
+
+    def _in_hunting_ground(self) -> bool:
+        """The hunting ground's bar is read where the ≡ menu would be."""
+        frame = self.vision.capture()
+        texts = [
+            normalize_text(self.vision.simplify(str(getattr(box, "name", ""))))
+            for box in self.vision.ocr_boxes(frame, "狩猎场栏", MERCHANT_NAV_MENU_OCR_ROI)
+        ]
+        return self._hunting_ground_panel(texts)
 
     def _nav_menu_entries(self, frame, entries: tuple[str, ...], **kwargs):
         """The wanted ``entries`` the ≡ menu shows (with click points), and
@@ -2674,6 +2768,36 @@ class SandboxNavigationMixin:
             )
         )
 
+    def _area_map_open(self) -> bool:
+        """The area map's 「战斗 …」/「安全 …」 title is read top left, or its
+        footer (世界地图 / 探索) bottom right.
+
+        The title alone missed a map left open (player v0.2.11 2026-10-23,
+        第11章 回主城: 「没认出小地图的≡按钮」 after the area-map walk): the map
+        covered the ≡ button and the key caps, and was never closed."""
+        header = self._field_map_header()
+        if any(tag in header for tag in AREA_MAP_HEADER_TAGS):
+            return True
+        return self._area_map_footer_shown()
+
+    def _area_map_footer_shown(self) -> bool:
+        footer = normalize_text(
+            self.vision.simplify(
+                self.vision.ocr_text(
+                    self.vision.capture(), "地图底栏", relative_roi=AREA_MAP_FOOTER_RELATIVE_ROI
+                )
+            )
+        )
+        return any(word in footer for word in AREA_MAP_FOOTER_KEYWORDS)
+
+    def _close_field_map_if_open(self) -> None:
+        """Close the area map when its title still shows.  A page not
+        confirmed by the strict check was left open, and the next field step
+        clicked on the map (player 1080p 2026-10-23, 第9章 守山人休息处)."""
+        if self._area_map_open():
+            self._status("区域地图", "地图页没认准但标题还在，按返回关掉")
+            self._close_field_map()
+
     def _open_field_map(self) -> str | None:
         """Open the field's area map (as M does); return its header text."""
         self.task.operate_click(
@@ -2687,7 +2811,9 @@ class SandboxNavigationMixin:
             if "战斗" in header or "安全" in header:
                 return header
             if monotonic() >= end_at:
-                return None
+                # The map opened with its title unread: still the map, so the
+                # caller closes it (None left it covering the field).
+                return header if self._area_map_footer_shown() else None
             self.task.sleep(0.4)
 
     def _close_field_map(self) -> None:
@@ -2702,7 +2828,9 @@ class SandboxNavigationMixin:
         reclicked = False
         while True:
             header = self._field_map_header()
-            if "战斗" not in header and "安全" not in header:
+            if not any(tag in header for tag in AREA_MAP_HEADER_TAGS) and not (
+                self._area_map_footer_shown()
+            ):
                 return
             open_hits += 1
             if monotonic() >= end_at:
@@ -3069,7 +3197,7 @@ class SandboxNavigationMixin:
             if opened is None:
                 entry = self._travel_to_hunting_ground()
                 if entry == HUNTING_GROUND_NAV_ENTRY:
-                    opened = self._open_teleport_map_at_hunting_ground()
+                    opened = self._open_teleport_map_at_hunting_ground(card)
                 elif entry is not None:
                     # No 狩猎场 in the ≡ menu -> 艾琳 (Leo 2026-09-30).  She
                     # stands in the town, so the route starts right there.
