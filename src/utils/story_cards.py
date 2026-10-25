@@ -25,6 +25,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from src.utils import image_io
 from src.utils.image_utils import template_match_response
 from src.utils.ocr_utils import normalize_ocr_text
 
@@ -68,7 +69,7 @@ _template_cache: list[np.ndarray] = []
 
 def _plus_template() -> np.ndarray | None:
     if not _template_cache:
-        template = cv2.imread(str(PLUS_TEMPLATE), cv2.IMREAD_GRAYSCALE)
+        template = image_io.read(str(PLUS_TEMPLATE), cv2.IMREAD_GRAYSCALE)
         if template is None:
             return None
         _template_cache.append(template)

@@ -31,6 +31,7 @@ import cv2
 import numpy as np
 
 from src.utils.field_battle import AUTO_TEXTS, LEAVE_TEXTS, TURN_PATTERN
+from src.utils import image_io
 from src.utils.image_utils import correlation_response, template_match_response
 from src.utils.ocr_utils import normalize_ocr_text
 
@@ -228,7 +229,7 @@ def icon_score(frame_1080: np.ndarray, template_path: Path, search, white: bool 
     white pixels only (an icon drawn white over any background)."""
     template = _templates.get((template_path, white))
     if template is None:
-        colour = cv2.imread(str(template_path))
+        colour = image_io.read(str(template_path))
         if colour is None:
             return 0.0
         template = _white(colour) if white else cv2.cvtColor(colour, cv2.COLOR_BGR2GRAY)
