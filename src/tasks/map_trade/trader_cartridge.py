@@ -733,15 +733,6 @@ class ShopCartridgeNavigationMixin:
                 self.task.sleep(STAR_VERIFY_INTERVAL)
         return toast_seen and state != "yellow"
 
-    def _gray_star_present(
-        self,
-        frame: np.ndarray,
-        slot: int,
-        point: tuple[float, float],
-    ) -> bool:
-        state = self._star_state(frame, slot, point)
-        return state == "gray"
-
     def _wait_for_yellow_star(
         self,
         slot: int,

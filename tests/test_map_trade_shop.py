@@ -562,7 +562,7 @@ class ShopAndCatalogTest(unittest.TestCase):
         trader = object.__new__(Trader)
         trader.task = task
         trader.vision = vision
-        trader._gray_star_present = lambda *_args: False
+        trader._star_state = lambda *_args: None  # covered by the toast
 
         self.assertTrue(trader._wait_for_gray_star(6, SHOP_FAVORITE_POINTS[6]))
         self.assertIn(("6 取消收藏提示", "已将商品甜椒从收藏中移除"), statuses)
@@ -584,7 +584,7 @@ class ShopAndCatalogTest(unittest.TestCase):
         trader = object.__new__(Trader)
         trader.task = task
         trader.vision = vision
-        trader._gray_star_present = lambda *_args: False
+        trader._star_state = lambda *_args: None  # covered by the toast
 
         self.assertFalse(trader._wait_for_gray_star(6, SHOP_FAVORITE_POINTS[6]))
         self.assertTrue(any("取消收藏未生效" in message for message in warnings))
