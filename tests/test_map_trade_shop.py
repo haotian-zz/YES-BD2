@@ -38,6 +38,7 @@ from src.tasks.map_trade.trader import (
 from src.tasks.map_trade.trader_constants import (
     SHOP_CARTRIDGE_OCR_RELATIVE_ROI,
     SHOP_UP_SCROLL_RECOGNITION_INTERVAL,
+    STAR_PRESSES,
 )
 from src.tasks.map_trade.vision import Vision
 from src.utils.calibration import FHD_1080
@@ -407,6 +408,7 @@ class ShopAndCatalogTest(unittest.TestCase):
 
         trader._star_state = star_state
 
+        trader._wait_star_toast_gone = lambda: None
         self.assertTrue(trader._align_unfavorited_points("S1"))
         self.assertEqual([(*SHOP_FAVORITE_POINTS[6], STAR_POST_CLICK_DELAY)], clicks)
         self.assertEqual(1.0, STAR_POST_CLICK_DELAY)
@@ -425,6 +427,7 @@ class ShopAndCatalogTest(unittest.TestCase):
         trader._star_state = lambda _frame, slot, _point: states.get(slot)
         trader._wait_for_yellow_star = lambda _slot, _point: True
 
+        trader._wait_star_toast_gone = lambda: None
         self.assertTrue(trader._align_unfavorited_points("S1"))
         self.assertEqual(
             [(*SHOP_FAVORITE_POINTS[1], STAR_POST_CLICK_DELAY)],
@@ -474,13 +477,28 @@ class ShopAndCatalogTest(unittest.TestCase):
         self.assertTrue(trader._align_unfavorited_points("S1"))
         self.assertEqual([(*point, STAR_POST_CLICK_DELAY)] * 2, clicks)
 
-    def test_a_star_that_never_changes_fails_after_two_presses(self):
+    def test_a_star_that_never_changes_fails_after_three_presses(self):
         clicks = []
         trader = self._star_trader(clicks)
         trader._star_state = lambda _frame, slot, _point: "gray" if slot == 1 else None
         trader.vision.ocr_text = lambda *_a, **_k: ""
         self.assertFalse(trader._align_unfavorited_points("S1"))
-        self.assertEqual(2, len(clicks))
+        self.assertEqual(STAR_PRESSES, len(clicks))
+
+    def test_a_star_press_waits_for_the_last_toast_to_fade(self):
+        # Live 2026-10-26: presses under the stacked toasts were lost.
+        clicks = []
+        trader = self._star_trader(clicks)
+        reads = iter(["已将商品哈密瓜加入收藏", "已将商品哈密瓜加入收藏", ""])
+        trader.vision.ocr_text = lambda *_a, **_k: next(reads, "")
+        waited = []
+        trader.task.sleep = waited.append
+        trader._star_state = lambda _frame, slot, _point: (
+            ("yellow" if clicks else "gray") if slot == 1 else None
+        )
+        self.assertTrue(trader._align_unfavorited_points("S1"))
+        self.assertEqual(1, len(clicks))
+        self.assertGreaterEqual(len(waited), 2)
 
     def test_gray_star_detection_anchors_enlarged_region_at_supplied_point(self):
         captured = []
