@@ -63,7 +63,16 @@ STAR_VERIFY_ATTEMPTS = 5
 STAR_VERIFY_INTERVAL = 0.25
 STAR_POST_CLICK_DELAY = 1.0
 # A star that did not change is pressed once more (presses in all).
-STAR_PRESSES = 2
+STAR_PRESSES = 3
+# The 收藏 toasts stack over the second row of goods (1920x1080, live
+# 2026-10-26); a press waits up to this long for them to fade.
+STAR_TOAST_REGION = (
+    780 / FHD_1080.width,
+    160 / FHD_1080.height,
+    1470 / FHD_1080.width,
+    290 / FHD_1080.height,
+)
+STAR_TOAST_FADE_SECONDS = 3.0
 STAR_REMOVE_TOAST_KEYWORD = "从收藏中移除"
 STAR_ADD_TOAST_KEYWORD = "加入收藏"
 BUY_ALL_FAVORITES_KEYWORD = "购买全部收藏"

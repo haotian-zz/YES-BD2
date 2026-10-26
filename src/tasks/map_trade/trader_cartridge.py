@@ -41,6 +41,8 @@ from src.tasks.map_trade.trader_constants import (
     STAR_PIXEL_THRESHOLD,
     STAR_POST_CLICK_DELAY,
     STAR_PRESSES,
+    STAR_TOAST_FADE_SECONDS,
+    STAR_TOAST_REGION,
     STAR_REMOVE_TOAST_KEYWORD,
     STAR_ROI_HALF_SIZE_X,
     STAR_ROI_HALF_SIZE_Y,
@@ -663,6 +665,7 @@ class ShopCartridgeNavigationMixin:
         """Press a star until it changes; a press that left it as it was
         (live 2026-10-26: S5 #3, S6 #2 stayed gray) is pressed once more."""
         for press in range(STAR_PRESSES):
+            self._wait_star_toast_gone()
             self.task.operate_click(*point, after_sleep=STAR_POST_CLICK_DELAY)  # 不用确认：下面等星标变色
             if changed(slot, point):
                 return True
@@ -671,6 +674,19 @@ class ShopCartridgeNavigationMixin:
                     return False
                 self.task.log_info(f"买：收藏位#{slot} 点了星标没变，再点一次。")
         return False
+
+    def _wait_star_toast_gone(self) -> None:
+        """Let the last 「已将商品…加入收藏」 toast fade first: presses under it
+        were lost (live 2026-10-26, mostly the second row, which it covers)."""
+        def toast_shown() -> bool:
+            text = normalize_text(self.vision.simplify(self.vision.ocr_text(
+                self.vision.capture(), "收藏提示", relative_roi=STAR_TOAST_REGION,
+            )))
+            return "收藏" in text
+
+        end_at = monotonic() + STAR_TOAST_FADE_SECONDS
+        while toast_shown() and monotonic() < end_at:
+            self.task.sleep(STAR_VERIFY_INTERVAL)
 
     def _star_spec(self, slot: int, point: tuple[float, float]) -> TemplateSpec:
         half_x = STAR_ROI_HALF_SIZE_X / FHD_1080.width
