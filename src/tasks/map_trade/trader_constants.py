@@ -62,6 +62,8 @@ STAR_PIXEL_THRESHOLD = 0.90
 STAR_VERIFY_ATTEMPTS = 5
 STAR_VERIFY_INTERVAL = 0.25
 STAR_POST_CLICK_DELAY = 1.0
+# A star that did not change is pressed once more (presses in all).
+STAR_PRESSES = 2
 STAR_REMOVE_TOAST_KEYWORD = "从收藏中移除"
 STAR_ADD_TOAST_KEYWORD = "加入收藏"
 BUY_ALL_FAVORITES_KEYWORD = "购买全部收藏"

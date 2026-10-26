@@ -40,6 +40,7 @@ from src.tasks.map_trade.trader_constants import (
     STAR_ADD_TOAST_KEYWORD,
     STAR_PIXEL_THRESHOLD,
     STAR_POST_CLICK_DELAY,
+    STAR_PRESSES,
     STAR_REMOVE_TOAST_KEYWORD,
     STAR_ROI_HALF_SIZE_X,
     STAR_ROI_HALF_SIZE_Y,
@@ -640,8 +641,7 @@ class ShopCartridgeNavigationMixin:
                     self._status(f"{shop_id} 空收藏#{slot}", "已是灰星")
                     continue
                 self._status(f"{shop_id} 空收藏#{slot}", "点击取消收藏")
-                self.task.operate_click(*point, after_sleep=STAR_POST_CLICK_DELAY)
-                if not self._wait_for_gray_star(slot, point):
+                if not self._press_star(slot, point, "yellow", self._wait_for_gray_star):
                     self.task.log_warning(
                         f"买：{reference.label} #{slot} 点击后未确认灰星或移除提示。"
                     )
@@ -652,13 +652,25 @@ class ShopCartridgeNavigationMixin:
                 self._status(f"{shop_id} 收藏#{slot}", "已是黄星")
                 continue
             self._status(f"{shop_id} 收藏#{slot}", "点击加入收藏")
-            self.task.operate_click(*point, after_sleep=STAR_POST_CLICK_DELAY)
-            if not self._wait_for_yellow_star(slot, point):
+            if not self._press_star(slot, point, "gray", self._wait_for_yellow_star):
                 self.task.log_warning(
                     f"买：{reference.label} #{slot} 点击后未确认黄星或加入提示。"
                 )
                 return False
         return True
+
+    def _press_star(self, slot: int, point: tuple[float, float], before: str, changed) -> bool:
+        """Press a star until it changes; a press that left it as it was
+        (live 2026-10-26: S5 #3, S6 #2 stayed gray) is pressed once more."""
+        for press in range(STAR_PRESSES):
+            self.task.operate_click(*point, after_sleep=STAR_POST_CLICK_DELAY)  # 不用确认：下面等星标变色
+            if changed(slot, point):
+                return True
+            if press + 1 < STAR_PRESSES:
+                if self._star_state(self.vision.capture(), slot, point) != before:
+                    return False
+                self.task.log_info(f"买：收藏位#{slot} 点了星标没变，再点一次。")
+        return False
 
     def _star_spec(self, slot: int, point: tuple[float, float]) -> TemplateSpec:
         half_x = STAR_ROI_HALF_SIZE_X / FHD_1080.width
@@ -700,9 +712,11 @@ class ShopCartridgeNavigationMixin:
         point: tuple[float, float],
     ) -> bool:
         toast_seen = False
+        state = None
         for attempt in range(STAR_VERIFY_ATTEMPTS):
             frame = self.vision.capture()
-            if self._gray_star_present(frame, slot, point):
+            state = self._star_state(frame, slot, point)
+            if state == "gray":
                 return True
             if not toast_seen:
                 text = self.vision.ocr_text(frame, "取消收藏成功提示")
@@ -717,7 +731,7 @@ class ShopCartridgeNavigationMixin:
                     toast_seen = True
             if attempt + 1 < STAR_VERIFY_ATTEMPTS:
                 self.task.sleep(STAR_VERIFY_INTERVAL)
-        return toast_seen
+        return toast_seen and state != "yellow"
 
     def _gray_star_present(
         self,
@@ -734,6 +748,7 @@ class ShopCartridgeNavigationMixin:
         point: tuple[float, float],
     ) -> bool:
         toast_seen = False
+        state = None
         for attempt in range(STAR_VERIFY_ATTEMPTS):
             frame = self.vision.capture()
             state = self._star_state(frame, slot, point)
@@ -752,7 +767,10 @@ class ShopCartridgeNavigationMixin:
                     toast_seen = True
             if attempt + 1 < STAR_VERIFY_ATTEMPTS:
                 self.task.sleep(STAR_VERIFY_INTERVAL)
-        return toast_seen
+        # Live 2026-10-26: the toast was the slot before's (「已将商品哈密瓜
+        # 加入收藏」) while this star stayed gray; it counts only when the star
+        # itself cannot be read.
+        return toast_seen and state != "gray"
 
     def select_shop_tab(self, shop: str) -> bool:
         try:

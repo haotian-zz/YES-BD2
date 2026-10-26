@@ -431,6 +431,57 @@ class ShopAndCatalogTest(unittest.TestCase):
             clicks,
         )
 
+    def _star_trader(self, clicks):
+        task = SimpleNamespace(
+            operate_click=lambda x, y, after_sleep=0: clicks.append((x, y, after_sleep)),
+            log_warning=lambda *_args, **_kwargs: None,
+            log_info=lambda *_args, **_kwargs: None,
+            info_set=lambda *_args, **_kwargs: None,
+            sleep=lambda *_args: None,
+        )
+        trader = object.__new__(Trader)
+        trader.task = task
+        trader.vision = SimpleNamespace(
+            capture=lambda: np.zeros((1080, 1920, 3), dtype=np.uint8),
+            ocr_text=lambda *_a, **_k: "已将商品哈密瓜加入收藏",
+            simplify=lambda text: text,
+        )
+        return trader
+
+    def test_another_slots_toast_does_not_pass_a_gray_star(self):
+        # Live 2026-10-26: S5 #3 (白糖) stayed gray under #1's 哈密瓜 toast.
+        trader = self._star_trader([])
+        trader._star_state = lambda _frame, _slot, _point: "gray"
+        self.assertFalse(trader._wait_for_yellow_star(3, SHOP_FAVORITE_POINTS[3]))
+
+    def test_toast_passes_a_star_it_covers(self):
+        trader = self._star_trader([])
+        trader._star_state = lambda _frame, _slot, _point: None
+        self.assertTrue(trader._wait_for_yellow_star(1, SHOP_FAVORITE_POINTS[1]))
+
+    def test_a_star_that_stayed_gray_is_pressed_once_more(self):
+        clicks = []
+        trader = self._star_trader(clicks)
+        point = SHOP_FAVORITE_POINTS[1]
+
+        def star_state(_frame, slot, _point):
+            if slot != 1:
+                return None
+            return "yellow" if len(clicks) >= 2 else "gray"
+
+        trader._star_state = star_state
+        trader.vision.ocr_text = lambda *_a, **_k: ""
+        self.assertTrue(trader._align_unfavorited_points("S1"))
+        self.assertEqual([(*point, STAR_POST_CLICK_DELAY)] * 2, clicks)
+
+    def test_a_star_that_never_changes_fails_after_two_presses(self):
+        clicks = []
+        trader = self._star_trader(clicks)
+        trader._star_state = lambda _frame, slot, _point: "gray" if slot == 1 else None
+        trader.vision.ocr_text = lambda *_a, **_k: ""
+        self.assertFalse(trader._align_unfavorited_points("S1"))
+        self.assertEqual(2, len(clicks))
+
     def test_gray_star_detection_anchors_enlarged_region_at_supplied_point(self):
         captured = []
         point = SHOP_FAVORITE_POINTS[6]
