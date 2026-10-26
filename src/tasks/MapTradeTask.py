@@ -463,3 +463,21 @@ class MapTradeTask(MapAutomationTaskBase):
             return self._run_phases(navigator, phases, after_home=trader.left_shop)
         finally:
             trade_detail.publish(self, getattr(trader, "trade_detail", None))
+
+
+class TradeFavoritesTask(MapTradeTask):
+    """Star the goods by the local table, then trade (developer helper).
+
+    The 收藏重建周期 setting was taken out (Leo 2026-10-05); an account whose
+    shop has nothing starred buys nothing every day (bd2 session 2026-10-24
+    to 10-26: 「收藏中没有加入的商品」).  This runs the kept rebuild once:
+    every cartridge's stars are set by SHOP_UNFAVORITED_POINTS, then the
+    trade goes on as usual.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.name = "跑商（先重建收藏）"
+        self.description = "按本地收藏表把 31 张商品卡带的收藏点好，再照常跑商（开发用）。"
+        self.visible = False
+        self.default_config.update({"收藏重建周期": "每次"})

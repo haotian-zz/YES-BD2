@@ -193,6 +193,7 @@ config = {
         ["src.tasks.FiendHuntTask", "FiendHuntRecordTask"],
         ["src.tasks.SquareGoddessTask", "SquareGoddessTask"],
         ["src.tasks.MapTradeTask", "MapTradeTask"],
+        ["src.tasks.MapTradeTask", "TradeFavoritesTask"],
         ["src.tasks.TalentStarUpTask", "TalentStarUpTask"],
         ["src.tasks.BargainLoopTask", "BargainLoopTask"],
         ["src.tasks.MapCollectionTask", "MapCollectionTask"],
