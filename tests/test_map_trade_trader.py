@@ -4977,7 +4977,11 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
         )
         navigator = Navigator(task, vision)
         navigator.ensure_small_minimap = lambda: True
-        navigator.classify = lambda: ScreenState.SHOP
+        # The shop until 关闭商店, then the merchant menu and the field.
+        screens = iter([ScreenState.SHOP])
+        navigator.classify = lambda: next(screens, ScreenState.SANDBOX)
+        trade_screens = iter([ScreenState.SHOP])
+        navigator.classify_trade = lambda: next(trade_screens, ScreenState.MERCHANT_DIALOG)
         navigator._wait_for_ocr_keywords = (
             lambda keywords, timeout, name, interval=0.5, relative_roi=None, quiet=False: (
                 actions.append(("ocr", keywords, timeout, name, interval, relative_roi)) or True
