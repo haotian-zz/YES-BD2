@@ -1005,6 +1005,11 @@ class TradeNavigationMixin:
                     return
             if attempt < SHOP_CLOSE_CLICK_RETRIES:
                 self.task.sleep(SHOP_CLOSE_CLICK_INTERVAL)
+        if self.classify() == ScreenState.SHOP:
+            # Live 2026-10-25: the shop was still open and the fixed point is
+            # its 金币 counter; the 金币 card it opened held the return up.
+            self._status("箱庭主页按钮", "模板未命中，画面还是商店，不点标定相对点")
+            return
         self._status("箱庭主页按钮", "模板未命中，回退到标定相对点(1797,63)")
         self.task.operate_click(*CHAPTER_HOME_POINT, after_sleep=after_sleep)
 
@@ -1158,16 +1163,14 @@ class TradeNavigationMixin:
             quiet=True,
         ):
             self.task.operate_click(*DISCOUNT_SHOP_CLOSE_POINT, after_sleep=0.8)
-        elif not wait_for(
+            # Live 2026-10-25: the shop was still up after 关闭商店, and the
+            # next back press and the home button landed on it.
+            if not self._shop_left():
+                return NavigationResult(False, self.classify(), "点了「关闭商店」商店还在")
+        elif not self._shop_left():
             # The discount shop closed earlier this visit asks nothing: the
             # merchant menu comes straight back, a moment later (live 2K
             # 2026-10-22: read once mid-change, a whole return pass redone).
-            lambda: self.classify_trade() in (ScreenState.MERCHANT_DIALOG, ScreenState.SANDBOX),
-            MERCHANT_BACK_LOOK_SECONDS,
-            sleep=self.task.sleep,
-            poll=0.4,
-            clock=monotonic,
-        ):
             return NavigationResult(
                 False,
                 self.classify(),
@@ -1175,6 +1178,16 @@ class TradeNavigationMixin:
             )
         self._click_shop_close_control(after_sleep=0.8)
         return NavigationResult(True, ScreenState.SANDBOX, "已关闭商店")
+
+    def _shop_left(self) -> bool:
+        """The merchant menu or the field is back within a moment."""
+        return bool(wait_for(
+            lambda: self.classify_trade() in (ScreenState.MERCHANT_DIALOG, ScreenState.SANDBOX),
+            MERCHANT_BACK_LOOK_SECONDS,
+            sleep=self.task.sleep,
+            poll=0.4,
+            clock=monotonic,
+        ))
 
     def close_discount_shop_to_menu(self) -> NavigationResult:
         """Close only the discount shop; stay in the merchant's 砍价 menu.
@@ -1252,12 +1265,14 @@ class TradeNavigationMixin:
         text = read_dialog()
         if "拥有" not in text and "可购买" not in text:
             return True
-        if not (
-            SALE_OWNED_PATTERN.search(text)
-            and SALE_AVAILABLE_PATTERN.search(text)
-            and "出售" in text
-        ):
+        sale = SALE_AVAILABLE_PATTERN.search(text) and "出售" in text
+        # An item card (live 2026-10-25: 「金币 拥有53,248,539个」 from a press
+        # on the shop's gold counter) has the same frame and ✕.
+        item_card = "可购买" not in text and "出售" not in text
+        if not (SALE_OWNED_PATTERN.search(text) and (sale or item_card)):
             return False
+        if item_card:
+            self.task.log_info("跑商：返回前有物品说明框开着，点 ✕ 关掉。")
         self.task.operate_click(*SALE_CLOSE_POINT, after_sleep=0.5)
         end_at = monotonic() + SALE_DIALOG_TIMEOUT
         stable_hits = 0

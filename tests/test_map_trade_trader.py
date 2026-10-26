@@ -5509,6 +5509,58 @@ class PlainShopForSellingTest(unittest.TestCase):
         navigator._wait_for_cartridge_home = lambda **_k: True
         self.assertTrue(navigator._return_home_from_discount_shop().success)
 
+    def test_shop_still_up_after_close_shop_stops_before_home(self):
+        # Live 2026-10-25: the next back press and the home button's fixed
+        # point landed on the shop and opened its 金币 card.
+        from src.tasks.map_trade.navigator_constants import DISCOUNT_SHOP_CLOSE_POINT
+
+        clicks = []
+        navigator = self._navigator(clicks=clicks)
+        navigator._close_sale_dialog_before_return = lambda: True
+        navigator._click_shop_close_control = lambda **_k: clicks.append(("close",))
+        navigator._wait_for_ocr_keywords = lambda *_a, **_k: True
+        navigator.classify_trade = lambda: ScreenState.SHOP
+        navigator.classify = lambda: ScreenState.SHOP
+        navigator._click_chapter_home_button = lambda: clicks.append(("home",))
+        result = navigator._return_home_from_discount_shop()
+        self.assertFalse(result.success)
+        self.assertEqual("点了「关闭商店」商店还在", result.message)
+        self.assertEqual([("close",), ("click", DISCOUNT_SHOP_CLOSE_POINT)], clicks)
+
+    def _home_button_missed(self, state):
+        clicks = []
+        navigator = self._navigator(clicks=clicks)
+        navigator.vision.match = lambda *_a, **_k: SimpleNamespace(
+            score=-1.0, pixel_score=-1.0, zncc_score=-1.0, center=(0, 0)
+        )
+        navigator.vision.passes = lambda *_a, **_k: False
+        navigator.classify = lambda: state
+        navigator._click_chapter_home_button()
+        return clicks
+
+    def test_home_button_fixed_point_is_not_pressed_over_the_shop(self):
+        from src.tasks.map_trade.navigator_constants import CHAPTER_HOME_POINT
+
+        self.assertEqual([], self._home_button_missed(ScreenState.SHOP))
+        self.assertEqual([("click", CHAPTER_HOME_POINT)], self._home_button_missed(ScreenState.SANDBOX))
+
+    def test_item_card_is_closed_before_return(self):
+        from src.tasks.map_trade.trader_constants import SALE_CLOSE_POINT
+
+        clicks = []
+        navigator = self._navigator(clicks=clicks)
+        reads = iter(["金币 X 拥有53,248,539个 用金子铸造的闪光硬币。", "购买 血骑士", "购买 血骑士"])
+        navigator.vision.ocr_text = lambda *_a, **_k: next(reads)
+        self.assertTrue(navigator._close_sale_dialog_before_return())
+        self.assertEqual([("click", SALE_CLOSE_POINT)], clicks)
+
+    def test_unknown_owned_text_is_not_pressed(self):
+        clicks = []
+        navigator = self._navigator(clicks=clicks)
+        navigator.vision.ocr_text = lambda *_a, **_k: "出售 拥有"
+        self.assertFalse(navigator._close_sale_dialog_before_return())
+        self.assertEqual([], clicks)
+
     def test_sell_phase_enters_without_bargaining(self):
         source = Path("src/tasks/map_trade/trader_sell.py").read_text(encoding="utf-8")
         self.assertIn("enter_q_sp6_buy_flow(bargain=False)", source)
