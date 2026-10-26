@@ -92,6 +92,15 @@ PASS_SIGNIN_LABEL = "签到弹窗外的空白处"
 STRAY_PANEL_TITLES = ("战场角色设置",)
 
 
+# An item card: a press on a currency counter (the shop's 金币, the square's
+# 天赋神药) opens 「<item> 拥有N个 <description>」 with a ✕ at its top right
+# (live 2026-10-25: a fixed-point home press landed on one twice and H could
+# not get past it).  Its ✕ reads as a lone X.
+ITEM_CARD_OWNED = re.compile(r"^拥有[0-9][0-9,，.]*个$")
+ITEM_CARD_CLOSE_TEXTS = ("x", "×", "✕")
+ITEM_CARD_CLOSE_LABEL = "✕"
+
+
 @dataclass(frozen=True)
 class _Spot:
     """A place to tap that no OCR box covers (shaped like one)."""
@@ -160,6 +169,25 @@ def pass_signin_spot(boxes):
     return _Spot(PASS_SIGNIN_LABEL, x, y)
 
 
+def item_card_close(boxes):
+    """The ✕ of an item card on screen, or None."""
+    named = _named(boxes)
+    owned = next((box for name, box in named if ITEM_CARD_OWNED.match(name)), None)
+    if owned is None:
+        return None
+    left = float(getattr(owned, "x", 0) or 0)
+    top = float(getattr(owned, "y", 0) or 0)
+    closes = [
+        box
+        for name, box in named
+        if name.lower() in ITEM_CARD_CLOSE_TEXTS
+        and float(getattr(box, "x", 0) or 0) > left
+        and float(getattr(box, "y", 0) or 0) < top
+    ]
+    # The card's own ✕ is the nearest one above its 拥有 line.
+    return max(closes, key=lambda box: float(getattr(box, "y", 0) or 0), default=None)
+
+
 def pick(boxes, *, allow_cancel: bool = False) -> PopupPress | None:
     """The harmless press that closes the popup on screen, or None."""
     named = _named(boxes)
@@ -200,6 +228,9 @@ def pick(boxes, *, allow_cancel: bool = False) -> PopupPress | None:
             box = next((box for name, box in named if any(k in name for k in titles)), None)
         if box is not None:
             return PopupPress("点击画面返回", box)
+    box = item_card_close(boxes)
+    if box is not None:
+        return PopupPress(ITEM_CARD_CLOSE_LABEL, box)
     spot = pass_signin_spot(boxes)
     if spot is not None:
         return PopupPress(PASS_SIGNIN_LABEL, spot)

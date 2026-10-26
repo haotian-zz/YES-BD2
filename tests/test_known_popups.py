@@ -228,3 +228,26 @@ class NoButtonPopupsTest(unittest.TestCase):
         vision = SimpleNamespace(ocr_boxes=lambda frame, name: _boxes(*names))
         self.assertEqual("dismissed", recovery._handle_dialog(task, vision))
         self.assertEqual(1, len(escapes))
+
+
+class ItemCardTest(unittest.TestCase):
+    """Live 2026-10-25: 金币 / 天赋神药 cards opened by a press on a counter."""
+
+    def test_the_cards_own_x_is_pressed(self):
+        close = _box("X", 1419, 314)
+        boxes = [
+            _box("金币", 500, 340),
+            close,
+            _box("拥有53,248,539个", 500, 400),
+            _box("用金子铸造的闪光硬币。在任何地方都可以当", 500, 440),
+        ]
+        press = known_popups.pick(boxes)
+        self.assertEqual(known_popups.ITEM_CARD_CLOSE_LABEL, press.label)
+        self.assertIs(close, press.box)
+
+    def test_owned_text_without_a_close_is_left_alone(self):
+        self.assertIsNone(known_popups.pick(_boxes("天赋神药", "拥有107,265个")))
+
+    def test_an_x_below_the_owned_line_is_not_the_cards(self):
+        boxes = [_box("拥有107,265个", 500, 400), _box("X", 1419, 600)]
+        self.assertIsNone(known_popups.pick(boxes))
