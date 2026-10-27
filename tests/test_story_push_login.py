@@ -89,7 +89,7 @@ class StoryPushDifficultyTest(unittest.TestCase):
         task._push = lambda _deadline: next(results)
         task._field_to_home = lambda: task.steps.append("home") or True
         task._back_home_from_collection = lambda: task.steps.append("collection home") or True
-        task._enter_unfinished_story_card = lambda: task.steps.append("unfinished") or "playing card"
+        task._enter_unfinished_story_card = lambda _skip=(): task.steps.append("unfinished") or "playing card"
         banners = iter(banner_cards)
         task.skips = []
 
@@ -121,16 +121,94 @@ class StoryPushDifficultyTest(unittest.TestCase):
     def test_the_lost_banner_card_is_passed_over_on_the_next_pick(self):
         task = self._task(["编队打输了 3 次，请先加强编队或换一个阵形预设", "replay"], ["card 16", "card 13", "none"])
         task._story_screen_now = lambda: False
-        task._enter_unfinished_story_card = lambda: "none"
+        task._enter_unfinished_story_card = lambda _skip=(): "none"
         task.log_warning = lambda *_args, **_kwargs: None
         self.assertTrue(task.run_claim())
         self.assertEqual([[], [(0, (100, 200))], [(0, (100, 200))]], task.skips)
+
+    def test_a_stuck_event_card_is_left_for_the_next_one(self):
+        # Summer Knight's 「搬动冰雕」 puzzle, live 2026-10-27.
+        task = self._task(["按了主线任务也没有开始自动移动", "cleared"], ["none"])
+        task._story_screen_now = lambda: False
+        task.log_warning = lambda *_args, **_kwargs: None
+        picks = iter([(story_push_task.EVENT_ROW, 0, 350), (story_push_task.EVENT_ROW, 0, 630)])
+        task.skips = []
+
+        def enter(skip=()):
+            task.skips.append(list(skip))
+            pick = next(picks, None)
+            task._story_pick = pick
+            return "none" if pick is None else "活动游戏卡（没开始的那张）"
+
+        task._enter_unfinished_story_card = enter
+        task._enter_difficulty_card = lambda _skip=(): "none"
+        self.assertTrue(task.run_claim())
+        self.assertEqual(
+            [[], [(story_push_task.EVENT_ROW, 0, 350)], [(story_push_task.EVENT_ROW, 0, 350)]],
+            task.skips,
+        )
+
+    def test_a_stuck_story_card_still_stops_the_run(self):
+        task = self._task(["按了主线任务也没有开始自动移动"], [])
+        task._story_screen_now = lambda: False
+        task._enter_unfinished_story_card = lambda _skip=(): (
+            setattr(task, "_story_pick", ("剧情游戏卡", 0, 350)) or "剧情游戏卡（没开始的那张）"
+        )
+        task._note_why = lambda why: task.steps.append("why")
+        task._save_flow_diagnostic = lambda _name: None
+        task._claim_fail = lambda label: task.steps.append(f"fail {label}") or False
+        self.assertFalse(task.run_claim())
+        self.assertEqual(["why", "fail 推图"], task.steps)
 
     def test_replay_goal_is_read_from_the_quest_row(self):
         from src.utils import story_push
 
         self.assertTrue(story_push.replay_goal("再次挑战主线任务"))
         self.assertFalse(story_push.replay_goal("开始极难难度"))
+
+
+class StoryPushRowSeekTest(unittest.TestCase):
+    """The 活动游戏卡 row is at the foot of the page (live 2026-10-27)."""
+
+    def _task(self, headers):
+        task = object.__new__(StoryPushTask)
+        task.scrolls = []
+        looks = iter(headers)
+        task._row_header_y = lambda _titles: next(looks)
+        task.scroll_client = lambda _at, notches, **_kwargs: task.scrolls.append(notches)
+        return task
+
+    def test_a_row_below_the_screen_is_scrolled_up(self):
+        task = self._task([None, None, 1000.0, 738.0])
+        self.assertEqual(738.0, task._seek_row(("活动游戏卡",)))
+        self.assertEqual([-3, -3, -3], task.scrolls)
+
+    def test_a_row_on_screen_is_read_where_it_is(self):
+        task = self._task([180.0])
+        self.assertEqual(180.0, task._seek_row(("剧情游戏卡",)))
+        self.assertEqual([], task.scrolls)
+
+    def test_a_row_whose_bars_stay_below_the_screen_is_not_used(self):
+        task = self._task([900.0, 900.0])
+        self.assertIsNone(task._seek_row(("活动游戏卡",)))
+
+    def test_a_missing_row_gives_up(self):
+        task = self._task([None] * story_push_task.ROW_SEEK_LOOKS)
+        self.assertIsNone(task._seek_row(("活动游戏卡",)))
+
+    def test_a_left_card_is_passed_over_in_its_row(self):
+        from src.utils import story_cards
+
+        task = object.__new__(StoryPushTask)
+        task.info_set = task.log_info = lambda *_args, **_kwargs: None
+        task._reference_frame = lambda: None
+        task._drag_row = lambda *_args: None
+        cards = [story_cards.StoryCard((350, 810), story_cards.PLAYING), story_cards.StoryCard((630, 810), "not_started")]
+        with patch.object(story_cards, "plus_buttons", lambda *_args: [(350, 810), (630, 810)]), patch.object(
+            story_cards, "row_cards", lambda *_args: cards
+        ):
+            self.assertEqual((0, cards[1]), task._first_unfinished_in_row("活动游戏卡", 738.0, [(0, 352)]))
+            self.assertEqual((0, cards[0]), task._first_unfinished_in_row("活动游戏卡", 738.0))
 
 
 if __name__ == "__main__":

@@ -33,9 +33,21 @@ from src.utils import story_cards, story_push
 from src.utils.press_confirm import wait_for
 from src.utils.story_push import StoryScreen
 
-# Rows in the order the user gave (2026-10-22): 剧情游戏卡 first, then 店长.
-ROWS = (("剧情游戏卡", story_cards.STORY_ROW_TITLES), ("店长游戏卡", story_cards.MASTER_ROW_TITLES))
+# Rows in the order the user gave (2026-10-22): 剧情游戏卡 first, then 店长;
+# 活动游戏卡 last (the user 2026-10-27: their first clears pay 钻石 too).
+EVENT_ROW = "活动游戏卡"
+ROWS = (
+    ("剧情游戏卡", story_cards.STORY_ROW_TITLES),
+    ("店长游戏卡", story_cards.MASTER_ROW_TITLES),
+    (EVENT_ROW, story_cards.EVENT_ROW_TITLES),
+)
 PAGE_SCROLL_UP_NOTCHES = 10
+# The 活动游戏卡 row sits at the foot of the page (header y 738 scrolled to
+# the bottom, live 2026-10-27): rows below the screen, or whose bars are, are
+# brought up this many notches a look.
+ROW_SEEK_NOTCHES = 3
+ROW_SEEK_LOOKS = 6
+ROW_BARS_BELOW_HEADER = 230
 # A row is dragged on its cards' art (header + 150), five cards at a time.
 ROW_DRAG_BELOW_HEADER = 150
 ROW_DRAG_LEFT_X, ROW_DRAG_RIGHT_X = 300, 1700
@@ -81,6 +93,10 @@ DEFEAT_OUTCOME = "编队打输了"
 # A 困难 / 极难 card lost on is left for the next banner card (card 15 极难,
 # live 2026-10-23); after this many such cards the run stops.
 DIFFICULTY_DEFEATS_MAX = 2
+# An event card stopped by something the walk cannot do (Summer Knight's
+# 「搬动冰雕」 puzzle, live 2026-10-27) is left for the next unfinished one
+# in the row; a run passes over at most this many.
+EVENT_SKIPS_MAX = 4
 DEFEAT_SETTLE_SECONDS = 2.0
 DEFEAT_WORDS = ("defeat",)
 # The field HUD (SPACE / TAB under the skill wheel) with the quest row unread:
@@ -169,10 +185,14 @@ class StoryPushTask(CartridgeFieldTask):
         # (page, point) of each lost banner card, passed over on later picks.
         lost_picks: list[tuple[int, tuple[int, int]]] = []
         self._difficulty_pick = None
+        self._story_pick = None
+        # (row, page, 「+」 x) of each event card left this run.
+        skipped_picks: list[tuple[str, int, int]] = []
         inside = self._story_screen_now()
         while True:
             if inside:
                 inside = False
+                self._story_pick = None
                 card = "当前的剧情游戏卡"
                 if not cleared:
                     self.log_info(f"{LABEL}：已经在剧情游戏卡里，直接推图。")
@@ -180,7 +200,7 @@ class StoryPushTask(CartridgeFieldTask):
                 self._close_unlock_notices()
                 if not self._open_collection():
                     return self._claim_fail("打开游戏卡珍藏集")
-                card = "none" if banners_only else self._enter_unfinished_story_card()
+                card = "none" if banners_only else self._enter_unfinished_story_card(skipped_picks)
                 if card == "none" and self.config.get(DIFFICULTY_KEY, True):
                     card = self._enter_difficulty_card(lost_picks)
                 if card is None:
@@ -201,8 +221,10 @@ class StoryPushTask(CartridgeFieldTask):
                     return self._claim_fail("返回主页")
                 banners_only = True
                 continue
+            in_event_card = (getattr(self, "_story_pick", None) or ("",))[0] == EVENT_ROW
             if (
                 outcome.startswith(DEFEAT_OUTCOME)
+                and not in_event_card
                 and self.config.get(CONTINUE_KEY, True)
                 and self.config.get(DIFFICULTY_KEY, True)
                 and len(lost_cards) + 1 < DIFFICULTY_DEFEATS_MAX
@@ -216,6 +238,18 @@ class StoryPushTask(CartridgeFieldTask):
                 banners_only = True
                 continue
             banners_only = False
+            if (
+                outcome != "cleared"
+                and in_event_card
+                and self.config.get(CONTINUE_KEY, True)
+                and len(skipped_picks) < EVENT_SKIPS_MAX
+                and monotonic() < deadline
+            ):
+                skipped_picks.append(self._story_pick)
+                self.log_warning(f"{LABEL}：{card}推不下去（{outcome}）；先跳过，换下一张没推完的活动游戏卡。")
+                if not self._field_to_home():
+                    return self._claim_fail("返回主页")
+                continue
             if outcome != "cleared":
                 self._note_why(outcome)
                 self._save_flow_diagnostic("story_push_stopped")
@@ -411,24 +445,29 @@ class StoryPushTask(CartridgeFieldTask):
 
     # -- cartridge choice ------------------------------------------------------------
 
-    def _enter_unfinished_story_card(self) -> str | None:
-        """Enter the first story card whose bar is not full.
+    def _enter_unfinished_story_card(self, skip=()) -> str | None:
+        """Enter the first story card whose bar is not full, passing over the
+        (row, page, 「+」 x) picks in ``skip``.
 
         Returns the card's label, "none" when every story card is done, None
         when it could not be entered.
         """
+        self._story_pick = None
         # The page opens scrolled to the card in use; the top rows first.
         self.scroll_client((0.5, 0.55), PAGE_SCROLL_UP_NOTCHES, count=1, after_sleep=1.0)
         rows_seen = 0
         for row_name, titles in ROWS:
-            header_y = self._row_header_y(titles)
+            header_y = self._seek_row(titles)
             if header_y is None:
                 self.log_info(f"{LABEL}：游戏卡珍藏集里没看到「{row_name}」这一排。")
                 continue
             rows_seen += 1
-            card = self._first_unfinished_in_row(row_name, header_y)
-            if card is None:
+            passed = [(page, x) for row, page, x in skip if row == row_name]
+            found = self._first_unfinished_in_row(row_name, header_y, passed)
+            if found is None:
                 continue
+            page, card = found
+            self._story_pick = (row_name, page, card.plus[0])
             label = f"{row_name}（{'推到一半' if card.bar == story_cards.PLAYING else '没开始'}的那张）"
             self.log_info(f"{LABEL}：进入{label}。")
             self._click_reference(*card.click_point, after_sleep=2.0)  # 不用确认：推图循环接着看画面
@@ -469,6 +508,20 @@ class StoryPushTask(CartridgeFieldTask):
         self.log_info(f"{LABEL}：游戏卡珍藏集里没有标着可进行困难/极难难度的卡。")
         return "none"
 
+    def _seek_row(self, titles) -> float | None:
+        """The row's header y once the row and its bars are on screen,
+        scrolling down for rows further down the page."""
+        previous = None
+        for look in range(ROW_SEEK_LOOKS):
+            header_y = self._row_header_y(titles)
+            if header_y is not None and header_y + ROW_BARS_BELOW_HEADER <= REFERENCE_HEIGHT:
+                return header_y
+            if header_y is not None and header_y == previous:
+                break  # the page is at its foot
+            previous = header_y
+            self.scroll_client((0.5, 0.55), -ROW_SEEK_NOTCHES, count=1, after_sleep=1.0)
+        return None
+
     def _row_header_y(self, titles) -> float | None:
         boxes = self._reference_boxes(self.capture_frame(), None, "珍藏集行标题")
         box = story_cards.row_header(boxes, titles)
@@ -488,9 +541,10 @@ class StoryPushTask(CartridgeFieldTask):
             after_sleep=1.0,
         )
 
-    def _first_unfinished_in_row(self, row_name: str, header_y: float):
+    def _first_unfinished_in_row(self, row_name: str, header_y: float, skip=()):
         """Scroll the row to its first card, then page right until a card's
-        bar is not full or the row stops moving."""
+        bar is not full or the row stops moving; (page, card) or None.  The
+        (page, 「+」 x) cards in ``skip`` count as done."""
         previous = None
         for _drag in range(ROW_DRAGS_MAX):
             plus = story_cards.plus_buttons(self._reference_frame(), header_y)
@@ -499,16 +553,19 @@ class StoryPushTask(CartridgeFieldTask):
             previous = plus
             self._drag_row(header_y, ROW_DRAG_LEFT_X, ROW_DRAG_RIGHT_X)
         previous = None
-        for _page in range(ROW_DRAGS_MAX):
+        for page in range(ROW_DRAGS_MAX):
             cards = story_cards.row_cards(self._reference_frame(), header_y)
             self.info_set(f"{row_name}进度", " ".join(card.bar for card in cards))
             self.log_info(
                 f"{LABEL}：「{row_name}」行标题 y={header_y:.0f}，这一页 "
                 + (" ".join(f"{card.plus[0]}:{card.bar}" for card in cards) or "没有卡")
             )
-            card = story_cards.first_unfinished(cards)
+            passed = [x for at, x in skip if at == page]
+            card = story_cards.first_unfinished(
+                [card for card in cards if all(abs(card.plus[0] - x) > story_cards.PLUS_SPACING // 2 for x in passed)]
+            )
             if card is not None:
-                return card
+                return page, card
             plus = [card.plus for card in cards]
             if not plus or plus == previous:
                 return None

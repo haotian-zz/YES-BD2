@@ -46,6 +46,9 @@ EDGE_MARGIN = 40
 
 STORY_ROW_TITLES = ("剧情游戏卡", "劇情遊戲卡")
 MASTER_ROW_TITLES = ("店长游戏卡", "店長遊戲卡")
+# 「活动游戏卡 5／7」: the same 「+」 and bars (Summer Knight half played
+# showed a yellow bar, the unplayed ones none; live 2026-10-27).
+EVENT_ROW_TITLES = ("活动游戏卡", "活動遊戲卡")
 
 FULL, PLAYING, NOT_STARTED = "full", "playing", "not_started"
 
