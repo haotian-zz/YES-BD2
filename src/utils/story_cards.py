@@ -19,6 +19,7 @@ The user (2026-10-22): enter the first card whose bar is not full, the
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -129,6 +130,15 @@ def row_cards(frame_1080: np.ndarray, header_y: float, template: np.ndarray | No
 
 def first_unfinished(cards: list[StoryCard]) -> StoryCard | None:
     return next((card for card in cards if not card.finished), None)
+
+
+_OWNED = re.compile(r"(\d+)\s*[/／]\s*\d+")
+
+
+def owned_count(header_box) -> int | None:
+    """The owned count of a header 「活动游戏卡 5／7」 (5), None unread."""
+    found = _OWNED.search(normalize_ocr_text(getattr(header_box, "name", "")))
+    return None if found is None else int(found.group(1))
 
 
 def row_header(boxes, titles):

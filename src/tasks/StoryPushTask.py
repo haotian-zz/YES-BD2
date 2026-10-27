@@ -469,12 +469,13 @@ class StoryPushTask(CartridgeFieldTask):
         rows_seen = 0
         for row_name, titles in ROWS:
             header_y = self._seek_row(titles)
+            owned = getattr(self, "_row_owned", None)
             if header_y is None:
                 self.log_info(f"{LABEL}：游戏卡珍藏集里没看到「{row_name}」这一排。")
                 continue
             rows_seen += 1
             passed = [(page, x) for row, page, x in skip if row == row_name]
-            found = self._first_unfinished_in_row(row_name, header_y, passed)
+            found = self._first_unfinished_in_row(row_name, header_y, passed, owned)
             if found is None:
                 continue
             page, card = found
@@ -534,8 +535,11 @@ class StoryPushTask(CartridgeFieldTask):
         return None
 
     def _row_header_y(self, titles) -> float | None:
+        """The header's centre y; its 「n／m」 owned count is kept in
+        ``_row_owned`` (None unread)."""
         boxes = self._reference_boxes(self.capture_frame(), None, "珍藏集行标题")
         box = story_cards.row_header(boxes, titles)
+        self._row_owned = None if box is None else story_cards.owned_count(box)
         return None if box is None else box.y + box.height / 2
 
     def _reference_frame(self):
@@ -552,10 +556,15 @@ class StoryPushTask(CartridgeFieldTask):
             after_sleep=1.0,
         )
 
-    def _first_unfinished_in_row(self, row_name: str, header_y: float, skip=()):
+    def _first_unfinished_in_row(self, row_name: str, header_y: float, skip=(), owned=None):
         """Scroll the row to its first card, then page right until a card's
         bar is not full or the row stops moving; (page, card) or None.  The
-        (page, 「+」 x) cards in ``skip`` count as done."""
+        (page, 「+」 x) cards in ``skip`` count as done.
+
+        A row whose ``owned`` cards all show at once is not paged: dragged,
+        it only slides a little and the cards left on page 0 came back at
+        other x (活动游戏卡 5／7, live 2026-10-27: a left card was entered
+        again)."""
         previous = None
         for _drag in range(ROW_DRAGS_MAX):
             plus = story_cards.plus_buttons(self._reference_frame(), header_y)
@@ -578,7 +587,7 @@ class StoryPushTask(CartridgeFieldTask):
             if card is not None:
                 return page, card
             plus = [card.plus for card in cards]
-            if not plus or plus == previous:
+            if not plus or plus == previous or (owned is not None and len(plus) >= owned):
                 return None
             previous = plus
             self._drag_row(header_y, ROW_DRAG_RIGHT_X, ROW_DRAG_LEFT_X)

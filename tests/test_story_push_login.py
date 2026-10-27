@@ -235,6 +235,30 @@ class StoryPushRowSeekTest(unittest.TestCase):
             self.assertEqual((0, cards[1]), task._first_unfinished_in_row("活动游戏卡", 738.0, [(0, 352)]))
             self.assertEqual((0, cards[0]), task._first_unfinished_in_row("活动游戏卡", 738.0))
 
+    def test_a_row_showing_all_its_owned_cards_is_not_paged(self):
+        # 活动游戏卡 5／7, live 2026-10-27: paged, the row slid 160 px and a
+        # left card came back at another x and was entered again.
+        from src.utils import story_cards
+
+        task = object.__new__(StoryPushTask)
+        task.info_set = task.log_info = lambda *_args, **_kwargs: None
+        task._reference_frame = lambda: None
+        task.drags = []
+        task._drag_row = lambda *args: task.drags.append(args)
+        full = [story_cards.StoryCard((x, 810), story_cards.FULL) for x in (345, 625, 905, 1185, 1465)]
+        with patch.object(story_cards, "plus_buttons", lambda *_args: [card.plus for card in full]), patch.object(
+            story_cards, "row_cards", lambda *_args: full
+        ):
+            self.assertIsNone(task._first_unfinished_in_row("活动游戏卡", 738.0, (), owned=5))
+        self.assertEqual(1, len(task.drags))  # only the drag back to the row's start
+
+    def test_the_owned_count_is_read_from_the_header(self):
+        from src.utils import story_cards
+
+        self.assertEqual(5, story_cards.owned_count(SimpleNamespace(name="活动游戏卡 5／7")))
+        self.assertEqual(15, story_cards.owned_count(SimpleNamespace(name="剧情游戏卡15/20")))
+        self.assertIsNone(story_cards.owned_count(SimpleNamespace(name="活动游戏卡")))
+
 
 if __name__ == "__main__":
     unittest.main()
