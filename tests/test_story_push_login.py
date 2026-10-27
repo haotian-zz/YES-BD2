@@ -167,6 +167,31 @@ class StoryPushDifficultyTest(unittest.TestCase):
         self.assertFalse(story_push.replay_goal("开始极难难度"))
 
 
+class StoryPushRestartedBattleTest(unittest.TestCase):
+    """Splash Queen's boss, live 2026-10-27: after the third loss 「返回」 led
+    back to the battle's TURN 1, and the run could not get home."""
+
+    def _task(self, boxes):
+        task = object.__new__(StoryPushTask)
+        task.log_info = task.log_warning = lambda *_args, **_kwargs: None
+        task._battle_boxes = lambda: boxes
+        task.fled = []
+        task.leave_field_battle = lambda label, seen, allowed=False: task.fled.append(allowed) or "left"
+        return task
+
+    def test_the_battle_is_run_away_from(self):
+        ready = [SimpleNamespace(name="TURN.1", x=1640, y=970, width=50, height=30),
+                 SimpleNamespace(name="BATTLE", x=1740, y=970, width=70, height=30)]
+        task = self._task(ready)
+        task._flee_restarted_battle()
+        self.assertEqual([True], task.fled)
+
+    def test_no_battle_is_left_alone(self):
+        task = self._task([SimpleNamespace(name="与可疑商人对话", x=1500, y=160, width=200, height=30)])
+        task._flee_restarted_battle()
+        self.assertEqual([], task.fled)
+
+
 class StoryPushRowSeekTest(unittest.TestCase):
     """The 活动游戏卡 row is at the foot of the page (live 2026-10-27)."""
 

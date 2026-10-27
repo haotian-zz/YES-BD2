@@ -29,7 +29,7 @@ from src.tasks.DoomBookTask import (
     CartridgeFieldTask,
 )
 from src.tasks.task_vision_mixin import REFERENCE_HEIGHT, REFERENCE_WIDTH
-from src.utils import story_cards, story_push
+from src.utils import field_battle, story_cards, story_push
 from src.utils.press_confirm import wait_for
 from src.utils.story_push import StoryScreen
 
@@ -384,6 +384,17 @@ class StoryPushTask(CartridgeFieldTask):
                 return
         self.log_warning(f"{LABEL}：战败画面的「返回」没点掉。")
 
+    def _flee_restarted_battle(self) -> None:
+        """A story battle 「返回」 leads back into (Splash Queen's boss, live
+        2026-10-27: TURN 1 again, and 主页 never came): run away from it."""
+        boxes = self._battle_boxes()
+        if not field_battle.in_battle(boxes):
+            return
+        self.log_info(f"{LABEL}：战败「返回」后又回到这场战斗，逃跑离开。")
+        result = self.leave_field_battle(LABEL, boxes, allowed=True)
+        if result not in ("left", "none"):
+            self.log_warning(f"{LABEL}：没逃出这场战斗：{result}。")
+
     def _apply_preset(self, boxes, number: int) -> bool:
         """「预设」 → row ``number``'s 「使用」 → 确认, back on the battle's first turn."""
         self.log_info(f"{LABEL}：重新挑战前套用第 {number} 个阵形预设。")
@@ -710,6 +721,7 @@ class StoryPushTask(CartridgeFieldTask):
                 self.log_warning(f"{LABEL}：战斗失败（第 {defeats} 次）。")
                 if defeats >= DEFEATS_MAX:
                     self._leave_defeat(boxes)
+                    self._flee_restarted_battle()
                     return f"{DEFEAT_OUTCOME} {defeats} 次，请先加强编队或换一个阵形预设"
                 preset_pending = int(self.config.get(PRESET_KEY, 1) or 0) > 0
                 self.log_info(f"{LABEL}：重新挑战。")

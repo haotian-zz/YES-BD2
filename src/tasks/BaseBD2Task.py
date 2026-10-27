@@ -956,16 +956,18 @@ class BaseBD2Task(BaseTask):
     # own (活动每日战斗's auto battle got Esc, which ends the game's auto).
     FIELD_BATTLE_ESCAPE = False
 
-    def leave_field_battle(self, label: str, boxes=None) -> str:
+    def leave_field_battle(self, label: str, boxes=None, *, allowed: bool = False) -> str:
         """A field battle on screen (src/utils/field_battle): run away from
         it, or press 「离开」 on its result.  "none" (no battle here, or a task
         that never runs away), "left" (back on the field) or why it could not
-        be left.
+        be left.  ``allowed`` runs away for a task without
+        FIELD_BATTLE_ESCAPE, at a point it decided to (主线推图 after its
+        last lost battle).
 
         Leo 2026-10-22 「判定進戰鬥 就直接按esc 1秒按一下 最多按4下 看到有逃跑就
         不按」 (with auto battle on, the first Esc ends it, the next opens the
         menu)."""
-        if not getattr(self, "FIELD_BATTLE_ESCAPE", False):
+        if not (allowed or getattr(self, "FIELD_BATTLE_ESCAPE", False)):
             return "none"
         if boxes is None:
             boxes = self._battle_boxes()
