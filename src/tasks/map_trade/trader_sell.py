@@ -825,6 +825,11 @@ class SellFlowMixin:
         while True:
             frame = self.vision.capture()
             candidates = self._locate_sale_items(entry, frame)
+            if self._last_sale_ocr_output:
+                # The sale page was read: a still page being read is not
+                # stuck (bd2 会话 2026-10-27: FrozenScreen while closing the
+                # 杰登之门 shop after a long read of its unchanged list).
+                self._note_progress()
             if candidates:
                 self._last_sale_page_empty = False
                 return candidates, frame
@@ -1122,7 +1127,14 @@ class SellFlowMixin:
 
             if not name_boxes:
                 if not saw_item_name:
-                    last_reason = "全画面OCR未识别到商品名"
+                    # bd2 会话 2026-10-28: 杰登之门 said it was buying 松露油
+                    # and the bag held 84, yet its sell list showed only 蘑菇汤.
+                    listed = any(self._in_sale_item_list(box, frame.shape) for box in ocr_boxes)
+                    last_reason = (
+                        "这家商店的出售列表里没有这个商品（游戏没列出来，卖不了）"
+                        if listed
+                        else "全画面OCR未识别到商品名"
+                    )
                 continue
             saw_item_name = True
 

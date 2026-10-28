@@ -283,6 +283,14 @@ WALK_LABEL_EDGES = {
     # the label centre + 18 px.
     ("Q_sp18", "main_area", "battle_area_1"): (525, 278),
 }
+# The teleport map's line for a map whose circles this account never
+# activated (bd2 会话 2026-10-27: 第11章罗坦城门, 第12章埃克夏森林 read
+# 「没有已激活的魔法阵。」).  Going home and trying again cannot help: the
+# player has to walk there once.
+NO_ACTIVE_TELEPORT_TEXT = "没有已激活"
+NO_ACTIVE_TELEPORT_NOTE = "还没有激活的魔法阵，要先手动走到那里激活一次"
+
+
 # Maps the teleport map cannot take you to (no circle there): reached only by
 # walking from the neighbour named in WALK_EDGES / WALK_LABEL_EDGES.  When
 # that neighbour is already done (e.g. the day's skills ran out after it),

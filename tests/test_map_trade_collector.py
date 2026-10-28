@@ -3159,7 +3159,7 @@ class CollectionRouteTest(unittest.TestCase):
     """User 2026-09-28: on the last map go backwards, otherwise start from
     the town; a failed move restarts via the hunting ground."""
 
-    def _run(self, here, *, fail_first_advance=False, card_id="Q_sp6"):
+    def _run(self, here, *, fail_first_advance=False, card_id="Q_sp6", fail_message="走不过去"):
         card = CARD_BY_ID[card_id]
         events = []
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3179,7 +3179,7 @@ class CollectionRouteTest(unittest.TestCase):
                 events.append(("go", current.key, target.key))
                 if failed[0]:
                     failed[0] = False
-                    return NavigationResult(False, ScreenState.SANDBOX, "走不过去")
+                    return NavigationResult(False, ScreenState.SANDBOX, fail_message)
                 return NavigationResult(True, ScreenState.SANDBOX)
 
             navigator = SimpleNamespace(
@@ -3264,3 +3264,16 @@ class CollectionRouteTest(unittest.TestCase):
             ["main_area", "battle_area_1", "battle_area_2"],
             [event[1] for event in events if event[0] == "collect"],
         )
+
+    def test_a_map_never_activated_skips_the_card_without_a_restart(self):
+        # bd2 会话 2026-10-27: 第11～13章 「没有已激活的魔法阵」 each time.
+        from src.tasks.map_trade.models import NO_ACTIVE_TELEPORT_NOTE
+
+        events = self._run(
+            "main_area",
+            fail_first_advance=True,
+            fail_message=f"罗坦城门{NO_ACTIVE_TELEPORT_NOTE}",
+        )
+        self.assertNotIn(("hunting",), events)
+        self.assertEqual([("collect", "main_area"), ("go", "main_area", "battle_area_1")], events[:2])
+        self.assertEqual(1, sum(event[0] == "collect" for event in events))

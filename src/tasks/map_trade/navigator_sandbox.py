@@ -23,6 +23,8 @@ from src.tasks.map_trade.models import (
     CARD_BY_ID,
     CIRCLE_EXIT_WALKS,
     EVENT_WALK_EDGES,
+    NO_ACTIVE_TELEPORT_NOTE,
+    NO_ACTIVE_TELEPORT_TEXT,
     RESTART_NAV_ENTRIES,
     RESUMING_WALK_CARD_IDS,
     RESUMING_WALK_TIMEOUT,
@@ -2408,6 +2410,14 @@ class SandboxNavigationMixin:
             )
         teleport = self._select_map_teleport(context.teleports)
         if teleport is None:
+            if self._no_active_teleport_shown():
+                # Closed here: the HUD stays hidden under the map, and the
+                # way home after this found no ≡ / C·H·M·Q (bd2 会话
+                # 2026-10-27, 第11～14章).
+                self._close_area_map(context)
+                return NavigationResult(
+                    False, ScreenState.SANDBOX, f"{target.title}{NO_ACTIVE_TELEPORT_NOTE}"
+                )
             return NavigationResult(
                 False,
                 ScreenState.AREA_MAP,
@@ -3463,6 +3473,11 @@ class SandboxNavigationMixin:
         if direction == "right":
             return context.right_arrow is None and context.left_arrow is not None
         return context.left_arrow is None and context.right_arrow is not None
+
+    def _no_active_teleport_shown(self) -> bool:
+        """The teleport map says this map has no activated circle."""
+        text = normalize_text(self.vision.ocr_text(self.vision.capture(), "传送阵地图未激活"))
+        return NO_ACTIVE_TELEPORT_TEXT in text
 
     def _close_area_map(self, context: AreaMapContext) -> NavigationResult:
         if not context.map_page_mode.is_teleport_map:

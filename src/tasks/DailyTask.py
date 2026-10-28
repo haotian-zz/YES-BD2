@@ -341,13 +341,20 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
             # covered home under 公会/小屋 and all three steps failed).
             home_lost = False
             if not result:
-                if self._wait_for_home_confirmation(f"{name}失败后主页确认", timeout=3.0):
+                at_home = self._wait_for_home_confirmation(f"{name}失败后主页确认", timeout=3.0)
+                # A step that ended on another page is tried again too once
+                # home is back (bd2 会话 2026-10-27: the 小屋 press right after
+                # login opened a SEASON shop page; the back press reached home
+                # but 小屋签到 was left failed).  The last step still leaves
+                # the game where it is.
+                if not at_home and name != enabled[-1]:
+                    at_home = self._recover_home_after_failed_step(name)
+                home_lost = not at_home
+                if at_home:
                     self.log_info(f"{name}：没成功，已回到主页，再试一次。")
                     self._step_why = ""
                     self._home_lost_after_done = False
                     result = self._run_step(name, func)
-                else:
-                    home_lost = True
             if result == STEP_SKIPPED:
                 skipped.append(name)
             elif result:
@@ -363,11 +370,8 @@ class DailyTask(TaskVisionMixin, QuickHuntConfigMixin, BaseBD2Task):
                 # on home stops the rest (finding 24).
                 if name == enabled[-1]:
                     continue
-                back_home = (
-                    self._recover_home_after_failed_step(name)
-                    if home_lost
-                    else self._home_after_failed_step(name)
-                )
+                # home_lost: the way back already failed once above.
+                back_home = not home_lost and self._home_after_failed_step(name)
                 if not back_home:
                     stop_remaining = True
                     self.log_info(f"{name} 失败后未能确认回到主页，停止剩余子任务。")

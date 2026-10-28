@@ -307,6 +307,40 @@ class KeyboardFirstTest(unittest.TestCase):
         self.assertEqual((task.sent, task.clicks), ([], [(1070, 655)]))
 
 
+class SpentTalkTest(unittest.TestCase):
+    """bd2 会话 2026-10-27: 沙漠之花 showed no talk yet read 0/1 afterwards."""
+
+    def run_daily(self, after_daily):
+        from unittest import mock
+
+        from src.tasks.AffinityTalkTask import AffinityTalkTask
+
+        task = AffinityTalkTask.__new__(AffinityTalkTask)
+        task.logs = []
+        task.log_info = task.logs.append
+        task.info_add = lambda *a, **k: None
+        task._today = "2026-10-27"
+        task._record = SimpleNamespace(locked=set(), mark_talked=lambda key, day: task.logs.append("marked"))
+        detail = screen.Detail("沙漠之花", "席比雅", 2, (1, 15), 1, False)
+        task._open_card = lambda card: detail
+        task._talk_once = lambda card, first_answer: False
+        task._settled_detail = lambda key, label: screen.Detail("沙漠之花", "席比雅", 2, (1, 15), after_daily, False)
+        task._back_to_list = lambda: True
+        card = SimpleNamespace(costume="沙漠之花", character="席比雅", key=detail.key)
+        with mock.patch("src.tasks.AffinityTalkTask.record.save"):
+            return task._daily_talk(card, allow_locked=False), task.logs
+
+    def test_a_talk_that_spent_the_count_is_counted(self):
+        outcome, logs = self.run_daily(after_daily=0)
+        self.assertEqual("talked", outcome)
+        self.assertIn("marked", logs)
+
+    def test_a_talk_with_the_count_left_still_fails(self):
+        outcome, logs = self.run_daily(after_daily=1)
+        self.assertEqual("谈心没完成", outcome)
+        self.assertNotIn("marked", logs)
+
+
 class ReadingSafetyTest(unittest.TestCase):
     """Leo 2026-10-21 「主要辨識不要有問題 不要又甚麼數字沒辯到」."""
 

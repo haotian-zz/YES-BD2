@@ -1199,6 +1199,7 @@ class NavigatorTest(unittest.TestCase):
         vision = SimpleNamespace(click_client=lambda *_args, **_kwargs: None)
         navigator = Navigator(task, vision)
         navigator.ensure_small_minimap = lambda: True
+        navigator._no_active_teleport_shown = lambda: False
         card = CARD_BY_ID["Q_sp1"]
         missing = self._area_context(
             card.targets[1].title,
@@ -1234,6 +1235,27 @@ class NavigatorTest(unittest.TestCase):
         result = navigator._click_collection_destination(card, card.targets[1], multiple)
         self.assertTrue(result.success)
         self.assertEqual([stronger], selected)
+
+    def test_map_without_an_activated_circle_is_closed_and_named(self):
+        # bd2 会话 2026-10-27: 第11章罗坦城门 「没有已激活的魔法阵。」; the map
+        # page stayed open and every way home found no HUD.
+        from src.tasks.map_trade.models import NO_ACTIVE_TELEPORT_NOTE
+
+        navigator = Navigator(
+            SimpleNamespace(info_set=lambda *_args: None),
+            SimpleNamespace(
+                capture=lambda: None,
+                ocr_text=lambda *_a, **_k: "移动魔法阵 战斗Ⅰ 罗坦城门 没有已激活的魔法阵。",
+            ),
+        )
+        closed = []
+        navigator._close_area_map = lambda context: closed.append(context)
+        card = CARD_BY_ID["Q_sp11"]
+        missing = self._area_context(card.targets[1].title, card.targets[1].key, teleports=())
+        result = navigator._click_collection_destination(card, card.targets[1], missing)
+        self.assertFalse(result.success)
+        self.assertIn(NO_ACTIVE_TELEPORT_NOTE, result.message)
+        self.assertEqual([missing], closed)
 
     def test_collection_destination_fails_when_arrival_map_does_not_match(self):
         card = CARD_BY_ID["Q_sp1"]

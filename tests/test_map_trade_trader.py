@@ -926,7 +926,9 @@ class SellFlowTest(unittest.TestCase):
         self.assertEqual([900, 840, 960], target_heights)
         self.assertEqual([], match_calls)
         self.assertTrue(trader._last_sale_unavailable)
-        self.assertEqual("全画面OCR未识别到商品名", trader._last_sale_reason)
+        self.assertEqual(
+            "这家商店的出售列表里没有这个商品（游戏没列出来，卖不了）", trader._last_sale_reason
+        )
 
     def test_locate_sale_items_scales_left_roi_at_720p(self):
         frame = np.zeros((720, 1280, 3), dtype=np.uint8)

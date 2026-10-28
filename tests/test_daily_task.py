@@ -2355,19 +2355,33 @@ class DailyTaskHelperTest(unittest.TestCase):
         self.assertEqual(["guild", "公会签到失败后主页确认", "guild", "home", "business"], calls)
         self.assertEqual("['公会签到', '小屋签到', '一键收菜']", infos["完成"])
 
-    def test_a_failed_step_off_home_is_not_tried_again(self):
-        task, calls, _infos = self._run_task(False, home_back=False)
+    def test_a_failed_step_off_home_is_tried_again_once_home_is_back(self):
+        # bd2 会话 2026-10-27: the 小屋 press opened a SEASON shop page.
+        task, calls, infos = self._run_task(False, home_back=False)
+        results = iter((False, True))
+        task.run_guild_sign_in = lambda: calls.append("guild") or next(results)
 
         with patch("src.tasks.DailyTask.recover_to_home", return_value=True):
+            self.assertTrue(DailyTask.run(task))
+        self.assertEqual(2, calls.count("guild"))
+        self.assertEqual("['公会签到', '小屋签到', '一键收菜']", infos["完成"])
+
+    def test_a_failed_step_whose_way_home_fails_is_not_tried_again(self):
+        task, calls, _infos = self._run_task(False, home_back=False)
+
+        with patch("src.tasks.DailyTask.recover_to_home", return_value=False) as recover:
             self.assertFalse(DailyTask.run(task))
         self.assertEqual(1, calls.count("guild"))
+        recover.assert_called_once_with(task)
 
     def test_daily_run_goes_home_after_a_failed_step_left_elsewhere(self):
         task, calls, _infos = self._run_task(RuntimeError("boom"), home_back=False)
 
         with patch("src.tasks.DailyTask.recover_to_home", return_value=True) as recover:
             self.assertFalse(DailyTask.run(task))
-        recover.assert_called_once_with(task)
+        # Home again before the retry, and again after it.
+        self.assertEqual(2, recover.call_count)
+        self.assertEqual(2, calls.count("guild"))
         self.assertEqual(["home", "business"], calls[-2:])
 
     def test_daily_run_stops_when_home_cannot_be_confirmed_after_a_failure(self):

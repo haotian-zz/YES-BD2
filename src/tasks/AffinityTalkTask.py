@@ -504,7 +504,7 @@ class AffinityTalkTask(_ClaimTaskBase):
             self._back_to_list()
             return "locked"
         before = detail.record[0]
-        if not self._talk_once(card, first_answer=False):
+        if not self._talk_once(card, first_answer=False) and not self._spent_anyway(card):
             self._back_to_list()
             return "谈心没完成"
         self._record.mark_talked(card.key, self._today)
@@ -515,6 +515,18 @@ class AffinityTalkTask(_ClaimTaskBase):
         self.info_add("谈心次数", 1)
         self._back_to_list()
         return "talked"
+
+    def _spent_anyway(self, card) -> bool:
+        """True when a talk that looked failed spent the costume's daily talk.
+
+        bd2 会话 2026-10-27: 沙漠之花's 谈心 showed no result after two
+        presses and the run failed, but the panel read 0/1 afterwards.
+        """
+        after = self._settled_detail(card.key, "谈心失败后面板")
+        if after is None or after.daily != 0:
+            return False
+        self.log_info(f"{LABEL}：「{card.costume}」没看到谈心画面，但今天的谈心次数已经用掉，算谈过。")
+        return True
 
     # -- one talk ------------------------------------------------------------------------
 

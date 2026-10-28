@@ -26,6 +26,7 @@ from src.tasks.map_trade.collector_skills import SkillExecutionMixin
 from src.tasks.map_trade.models import (
     COLLECTABLE_CARDS,
     LAST_MAP_THEN_TOWN_CARD_IDS,
+    NO_ACTIVE_TELEPORT_NOTE,
     CollectionActionState,
     CollectionMapRole,
     CollectionResult,
@@ -283,7 +284,8 @@ class Collector(SkillExecutionMixin):
                 role = CollectionMapRole(target.key)
                 arrived = self._go_to_collection_target(card, current, target)
                 if arrived is not None and not arrived.success:
-                    if restarted:
+                    # Never activated: the same page waits after a restart.
+                    if restarted or NO_ACTIVE_TELEPORT_NOTE in arrived.message:
                         stopped = self._skip_card(
                             card,
                             f"前往{target.title}失败（{arrived.message}）",
