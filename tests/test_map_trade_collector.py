@@ -3199,6 +3199,7 @@ class CollectionRouteTest(unittest.TestCase):
                 inspect_collection_card_completion=lambda _card_id: NavigationResult(
                     True, ScreenState.CARD_MENU
                 ),
+                return_home=lambda: NavigationResult(True, ScreenState.HOME),
             )
             collector = Collector(task, object(), navigator, progress)
             collector._absorb_used_up = lambda **_kwargs: None
@@ -3274,6 +3275,5 @@ class CollectionRouteTest(unittest.TestCase):
             fail_first_advance=True,
             fail_message=f"罗坦城门{NO_ACTIVE_TELEPORT_NOTE}",
         )
-        self.assertNotIn(("hunting",), events)
-        self.assertEqual([("collect", "main_area"), ("go", "main_area", "battle_area_1")], events[:2])
-        self.assertEqual(1, sum(event[0] == "collect" for event in events))
+        # No restart, and no second pass either.
+        self.assertEqual([("collect", "main_area"), ("go", "main_area", "battle_area_1")], events)

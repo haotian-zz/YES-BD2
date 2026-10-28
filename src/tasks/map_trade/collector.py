@@ -623,7 +623,8 @@ class Collector(SkillExecutionMixin):
         if card not in self._skipped_cards:
             return False
         reason = self._skip_reasons.get(card.card_id, "")
-        return not reason.startswith("进不去")
+        # A map never activated waits the same way on the retry.
+        return not reason.startswith("进不去") and NO_ACTIVE_TELEPORT_NOTE not in reason
 
     def _forget_card_problems(self, card) -> None:
         """The retry's own outcome is what the report tells."""
