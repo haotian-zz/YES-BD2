@@ -417,8 +417,20 @@ class TradeNavigationMixin:
         """
 
         self._merchant_prompt_unread = False
-        if self._merchant_prompt_box(self.vision.capture()) is not None:
-            return NavigationResult(True, ScreenState.SANDBOX, "已在商人旁")
+        frame = self.vision.capture()
+        if self._merchant_prompt_box(frame) is not None:
+            if self._classify_trade_frame(frame) != ScreenState.MERCHANT_DIALOG:
+                return NavigationResult(True, ScreenState.SANDBOX, "已在商人旁")
+            # His 对话/商店 menu carries his name too (bd2 session 2026-10-28:
+            # left open after buying, cooking then waited on it for the
+            # field).  Close it; still open, the trip home below closes it.
+            self._click_shop_close_control(after_sleep=0.8)
+            frame = self.vision.capture()
+            if (
+                self._merchant_prompt_box(frame) is not None
+                and self._classify_trade_frame(frame) != ScreenState.MERCHANT_DIALOG
+            ):
+                return NavigationResult(True, ScreenState.SANDBOX, "已在商人旁")
         self._status("导航状态", "进入梦幻广场")
         self._merchant_stage_text = SQUARE_MERCHANT_STAGE
         entered = self._enter_square()

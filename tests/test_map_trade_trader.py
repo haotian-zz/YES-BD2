@@ -2926,6 +2926,7 @@ class TradeMerchantNavigationTest(unittest.TestCase):
         probed = []
         navigator = self._navigator(SimpleNamespace(capture=lambda: frame))
         navigator._merchant_prompt_box = lambda captured: probed.append(captured) or object()
+        navigator._classify_trade_frame = lambda _frame: ScreenState.SANDBOX
         navigator._enter_trade_card = lambda: self.fail("prompt visible: no cartridge entry")
         navigator._walk_to_merchant = lambda: self.fail("prompt visible: no walking")
 
@@ -2935,6 +2936,23 @@ class TradeMerchantNavigationTest(unittest.TestCase):
         self.assertEqual(ScreenState.SANDBOX, result.state)
         self.assertEqual(1, len(probed))
         self.assertIs(frame, probed[0])
+
+    def test_go_to_trade_merchant_closes_his_menu_left_open(self):
+        # bd2 session 2026-10-28: the menu after buying shows his name too.
+        states = [ScreenState.MERCHANT_DIALOG, ScreenState.SANDBOX]
+        clicks = []
+        navigator = self._navigator(SimpleNamespace(capture=lambda: None))
+        navigator._merchant_prompt_box = lambda _frame: object()
+        navigator._classify_trade_frame = lambda _frame: states.pop(0)
+        navigator._click_shop_close_control = lambda after_sleep=0.0: clicks.append(after_sleep)
+        navigator._enter_trade_card = lambda: self.fail("menu closed: no cartridge entry")
+
+        result = navigator.go_to_trade_merchant()
+
+        self.assertTrue(result.success)
+        self.assertEqual(ScreenState.SANDBOX, result.state)
+        self.assertEqual([0.8], clicks)
+        self.assertEqual([], states)
 
     def test_go_to_trade_merchant_enters_card_and_stops_when_prompt_shows(self):
         events = []
