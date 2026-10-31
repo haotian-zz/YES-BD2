@@ -257,8 +257,8 @@ class GameSizeTest(unittest.TestCase):
             self.assertEqual("", game_size.resize_to_fix(found))
             resizer.side_effect = RuntimeError("游戏窗口已最小化，请先恢复窗口。")
             self.assertEqual("游戏窗口已最小化，请先恢复窗口。", game_size.resize_to_fix(found))
-        resizer.assert_called_with(found.device_manager, (1920, 1080), executor=None)
-        game_size.resize_to_fix(found, (2560, 1440))
+            resizer.assert_called_with(found.device_manager, (1920, 1080), executor=None)
+            game_size.resize_to_fix(found, (2560, 1440))
         resizer.assert_called_with(found.device_manager, (2560, 1440), executor=None)
 
 
