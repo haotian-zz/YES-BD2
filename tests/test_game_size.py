@@ -26,13 +26,15 @@ def resizes_to(found, size=(1920, 1080), reason=""):
     """A resize that changes ``found``'s picture to ``size`` and reports ``reason``."""
     calls = []
 
-    def resize(target_executor):
+    def resize(target_executor, target=None):
         calls.append(target_executor)
+        resize.targets.append(target)
         found.device_manager.capture_method.width = size[0]
         found.device_manager.capture_method.height = size[1]
         return reason
 
     resize.calls = calls
+    resize.targets = []
     return resize
 
 
@@ -124,6 +126,42 @@ class GameSizeTest(unittest.TestCase):
         self.assertIn("已自动调成 1920×1080", task.info[game_size.NOTICE_KEY])
         self.assertEqual([True], [notify for _text, notify in task.infos])
         self.assertEqual([], task.warnings)
+
+    def test_a_window_two_pixels_narrow_is_set_exactly(self):
+        # bd2 session 2026-10-31: at 1918x1080 the 抽抽乐 entry took no click.
+        found = executor(1918, 1080)
+        resize = resizes_to(found)
+        task = Recorder(found)
+        clock = Clock()
+        self.assertFalse(
+            game_size.fix_or_warn(task, resize=resize, sleep=clock.sleep, monotonic=clock)
+        )
+        self.assertEqual([(1920, 1080)], resize.targets)
+        self.assertEqual({}, task.info)
+        self.assertEqual([], task.warnings)
+        self.assertEqual([False], [notify for _text, notify in task.infos])
+        self.assertIn("已调成 1920×1080", task.infos[0][0])
+
+    def test_a_near_miss_snaps_to_its_own_size(self):
+        found = executor(2559, 1440)
+        resize = resizes_to(found, size=(2560, 1440))
+        clock = Clock()
+        game_size.fix_or_warn(Recorder(found), resize=resize, sleep=clock.sleep, monotonic=clock)
+        self.assertEqual([(2560, 1440)], resize.targets)
+
+    def test_a_near_miss_that_cannot_be_fixed_runs_quietly(self):
+        found = executor(1918, 1080)
+        resize = resizes_to(found, size=(1918, 1080), reason="窗口无法移动")
+        task = Recorder(found)
+        clock = Clock()
+        self.assertFalse(
+            game_size.fix_or_warn(task, resize=resize, sleep=clock.sleep, monotonic=clock)
+        )
+        self.assertEqual([], task.warnings)
+        self.assertIn("窗口无法移动", task.infos[0][0])
+        # Not tried again for each child of the same batch.
+        game_size.fix_or_warn(Recorder(found), resize=resize, sleep=clock.sleep, monotonic=clock)
+        self.assertEqual(1, len(resize.calls))
 
     def test_resize_refused_warns_with_the_reason(self):
         found = executor(1600, 900)
@@ -220,6 +258,8 @@ class GameSizeTest(unittest.TestCase):
             resizer.side_effect = RuntimeError("游戏窗口已最小化，请先恢复窗口。")
             self.assertEqual("游戏窗口已最小化，请先恢复窗口。", game_size.resize_to_fix(found))
         resizer.assert_called_with(found.device_manager, (1920, 1080), executor=None)
+        game_size.resize_to_fix(found, (2560, 1440))
+        resizer.assert_called_with(found.device_manager, (2560, 1440), executor=None)
 
 
 class GuardedRunTest(unittest.TestCase):

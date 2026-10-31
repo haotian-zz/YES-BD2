@@ -66,6 +66,16 @@ def current_size(executor) -> tuple[int, int] | None:
     return width, height
 
 
+def near_miss(size: tuple[int, int] | None) -> tuple[int, int] | None:
+    """The supported size ``size`` is a pixel or two off from, else None."""
+    if size is None or tuple(size) in SUPPORTED_SIZES:
+        return None
+    for w, h in SUPPORTED_SIZES:
+        if abs(int(size[0]) - w) <= TOLERANCE and abs(int(size[1]) - h) <= TOLERANCE:
+            return w, h
+    return None
+
+
 def unsupported_size(executor) -> tuple[int, int] | None:
     """The game's size when it is one the tool does not support, else None."""
     size = current_size(executor)
@@ -98,8 +108,8 @@ def fixed_message(size: tuple[int, int]) -> str:
     )
 
 
-def resize_to_fix(executor) -> str:
-    """Set the game window to ``FIX_SIZE``; "" when done, else why not."""
+def resize_to_fix(executor, size: tuple[int, int] = FIX_SIZE) -> str:
+    """Set the game window to ``size``; "" when done, else why not."""
     try:
         from src.ui.manual_resolution import resize_game_window
     except Exception as exc:  # pragma: no cover - Windows-only imports
@@ -110,7 +120,7 @@ def resize_to_fix(executor) -> str:
     try:
         # executor=None: this runs at the start of the run itself, before it
         # clicks anything, so the 「任务正在运行」 check does not apply.
-        resize_game_window(manager, FIX_SIZE, executor=None)
+        resize_game_window(manager, size, executor=None)
     except Exception as exc:
         return str(exc) or type(exc).__name__
     return ""
@@ -129,12 +139,14 @@ def _refresh_capture(executor) -> None:
             pass
 
 
-def _wait_for_supported(executor, sleep, monotonic) -> bool:
+def _wait_for_supported(executor, sleep, monotonic, exact=None) -> bool:
     deadline = monotonic() + FIX_SETTLE_SECONDS
     while True:
         _refresh_capture(executor)
         size = current_size(executor)
-        if size is not None and supported(*size):
+        if size is not None and (
+            tuple(size) == exact if exact else supported(*size)
+        ):
             return True
         if monotonic() >= deadline:
             return False
@@ -158,6 +170,10 @@ def fix_or_warn(task, *, resize=None, sleep=time.sleep, monotonic=time.monotonic
     True when the game is still at an untested size; the run goes on either way.
     """
     executor = getattr(task, "executor", None)
+    snap = near_miss(current_size(executor))
+    if snap is not None:
+        _snap_to(task, executor, snap, resize=resize, sleep=sleep, monotonic=monotonic)
+        return False
     size = unsupported_size(executor)
     if size is None:
         return False
@@ -180,3 +196,29 @@ def fix_or_warn(task, *, resize=None, sleep=time.sleep, monotonic=time.monotonic
     task.info_set(NOTICE_KEY, text)
     task.log_warning(text, notify=should_notify())
     return True
+
+
+def _snap_to(task, executor, target, *, resize, sleep, monotonic) -> None:
+    """A window a pixel or two off a supported size is set to it exactly.
+
+    bd2 session 2026-10-31: the game came up at 1918x1080 (its frame at
+    x=-7); the 抽抽乐 entry on the home page took no click there, twice,
+    and took the first one once the window was 1920x1080 again.  Within
+    TOLERANCE it is still a supported size, so a failure here is only
+    logged and the run goes on.
+    """
+    size = current_size(executor)
+    now = monotonic()
+    if _last_failed_fix["at"] and now - _last_failed_fix["at"] < NOTIFY_GAP_SECONDS:
+        return
+    reason = (resize or resize_to_fix)(executor, target)
+    if not reason and _wait_for_supported(executor, sleep, monotonic, exact=target):
+        task.log_info(
+            f"游戏画面是 {size[0]}×{size[1]}，差了一两个像素，已调成 {target[0]}×{target[1]}。"
+        )
+        return
+    _last_failed_fix.update(at=now, reason=reason)
+    task.log_info(
+        f"游戏画面是 {size[0]}×{size[1]}，想调成 {target[0]}×{target[1]} 没成功"
+        f"（{reason or '调整后大小没变'}），照常执行。"
+    )
