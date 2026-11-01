@@ -2324,7 +2324,14 @@ class StoryCardNavigationMixin:
         if not story_push.talk_shown(frame_1080):
             return False
         self.story_talk_skipped = True
-        self.vision.click_reference(*story_push.TALK_SKIP_POINT, after_sleep=1.2)  # 不用确认：下一轮看「跳过对话」
+        # story_push points are 1920x1080; click_client takes frame pixels
+        # (click_reference here is 1280x720: the first live press landed
+        # at x 1920, off the 跳过 button).
+        x, y = story_push.TALK_SKIP_POINT
+        height, width = frame.shape[:2]
+        self.vision.click_client(  # 不用确认：下一轮看「跳过对话」
+            (round(x * width / 1920), round(y * height / 1080)), frame.shape, after_sleep=1.2
+        )
         self._status("导航状态", "卡带在放剧情对话，按跳过")
         return True
 

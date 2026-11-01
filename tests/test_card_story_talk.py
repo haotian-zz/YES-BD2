@@ -38,12 +38,13 @@ class StoryTalkSkipTest(unittest.TestCase):
     def test_the_live_talk_is_seen_and_skipped(self):
         nav = navigator()
         self.assertTrue(nav._skip_story_talk(talk_frame()))
-        self.assertEqual([story_push.TALK_SKIP_POINT], nav.clicks)
+        self.assertEqual([story_push.TALK_SKIP_POINT], nav.clicks)  # frame pixels at 1080p
         self.assertTrue(nav.story_talk_skipped)
 
-    def test_a_half_size_frame_is_read_too(self):
+    def test_a_smaller_frame_is_read_and_pressed_in_its_pixels(self):
         nav = navigator()
         self.assertTrue(nav._skip_story_talk(cv2.resize(talk_frame(), (1280, 720))))
+        self.assertEqual([(1092, 40)], nav.clicks)
 
     def test_no_talk_no_press(self):
         nav = navigator()
