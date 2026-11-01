@@ -36,6 +36,7 @@ from src.tasks.map_trade.navigator_constants import (
     EVENT_CATEGORY_HIGHLIGHT_REGION,
     EVENT_CATEGORY_POINT,
     FIRST_CARD_CONFIRM_REGION,
+    TALK_SKIP_CONFIRM_REGION,
     FIRST_CARD_DIALOG_REGION,
     FIRST_CARD_INSERT_REGION,
     FIRST_CARD_PAID_DIALOG_MESSAGE,
@@ -2320,7 +2321,7 @@ class StoryCardNavigationMixin:
             if frame.shape[:2] == (1080, 1920)
             else cv2.resize(frame, (1920, 1080), interpolation=cv2.INTER_AREA)
         )
-        if not story_push.icons(frame_1080)["talk_skip"]:
+        if not story_push.talk_shown(frame_1080):
             return False
         self.story_talk_skipped = True
         self.vision.click_reference(*story_push.TALK_SKIP_POINT, after_sleep=1.2)  # 不用确认：下一轮看「跳过对话」

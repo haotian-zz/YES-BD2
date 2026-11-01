@@ -204,6 +204,12 @@ TALK_SKIP_SEARCH = (1590, 15, 100, 90)
 # 0.67 (card 16); white masks give talks >= 0.93, other screens <= 0.47
 # over 62 shots.
 TALK_SKIP_MIN_SCORE = 0.8
+# The talk's 「F2」 key label (a white badge, black letters) under 跳过: over a
+# bright wallpaper the white-pixel icon match fell to 0.58 (角色卡3 派对会场,
+# bd2 session 2026-11-01); the badge is drawn the same over any background.
+TALK_SKIP_LABEL_TEMPLATE = TEMPLATE_DIR / "talk_skip_label.png"
+TALK_SKIP_LABEL_SEARCH = (1600, 75, 80, 55)
+TALK_SKIP_LABEL_MIN_SCORE = 0.85
 INTERACT_TEMPLATE = TEMPLATE_DIR / "interact_button.png"
 INTERACT_SEARCH = (1360, 835, 100, 100)
 INTERACT_MIN_SCORE = 0.85
@@ -251,6 +257,15 @@ def icons(frame_1080: np.ndarray) -> dict[str, bool]:
         "interact": icon_score(frame_1080, INTERACT_TEMPLATE, INTERACT_SEARCH) >= INTERACT_MIN_SCORE,
         "npc_focus": icon_score(frame_1080, NPC_FOCUS_TEMPLATE, NPC_FOCUS_SEARCH) >= NPC_FOCUS_MIN_SCORE,
     }
+
+
+def talk_shown(frame_1080: np.ndarray) -> bool:
+    """A story talk's 跳过 (F2) is up: its icon or its key label."""
+    return (
+        icon_score(frame_1080, TALK_SKIP_TEMPLATE, TALK_SKIP_SEARCH, white=True) >= TALK_SKIP_MIN_SCORE
+        or icon_score(frame_1080, TALK_SKIP_LABEL_TEMPLATE, TALK_SKIP_LABEL_SEARCH)
+        >= TALK_SKIP_LABEL_MIN_SCORE
+    )
 
 
 def _norm(box) -> str:

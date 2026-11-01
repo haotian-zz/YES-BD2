@@ -77,6 +77,9 @@ def chapter_filter(text) -> set[int | str] | None:
 SKILL_BAR_EMPTY_STOP_CARDS = 2
 
 
+# A card skipped on its story talk waits for the player, not for a retry.
+STORY_NOT_PLAYED_NOTE = "剧情还没推进"
+
 class Collector(SkillExecutionMixin):
     def __init__(
         self,
@@ -223,7 +226,7 @@ class Collector(SkillExecutionMixin):
                 # until it is (user 2026-11-01: 退出这张卡带, no retry).
                 stopped = self._skip_card(
                     card,
-                    "进去时在放剧情对话（这张卡的剧情还没推进，采集技能用不了），"
+                    f"进去时在放剧情对话（这张卡的{STORY_NOT_PLAYED_NOTE}，采集技能用不了），"
                     "已跳过对话；先自己把这张卡的剧情玩一段",
                     completed_this_run,
                 )
@@ -670,7 +673,11 @@ class Collector(SkillExecutionMixin):
             return False
         reason = self._skip_reasons.get(card.card_id, "")
         # A map never activated waits the same way on the retry.
-        return not reason.startswith("进不去") and NO_ACTIVE_TELEPORT_NOTE not in reason
+        return (
+            not reason.startswith("进不去")
+            and NO_ACTIVE_TELEPORT_NOTE not in reason
+            and STORY_NOT_PLAYED_NOTE not in reason
+        )
 
     def _forget_card_problems(self, card) -> None:
         """The retry's own outcome is what the report tells."""
