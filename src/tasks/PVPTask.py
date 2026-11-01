@@ -64,7 +64,7 @@ from src.utils.image_utils import (
     reference_roi_frame,
     stabilize_template_match,
 )
-from src.utils.ocr_utils import normalize_ocr_text
+from src.utils.ocr_utils import keyword_read, normalize_ocr_text
 from src.utils.pvp_dialog import (
     MULTIPLIER_RANGE,
     adjust_step,
@@ -126,6 +126,11 @@ PVP_MULTIPLIER_OCR_REFERENCE_ROI = (800, 213, 65, 33)  # 1280×720 参考
 # player's PC, v0.1.21 2026-10-11: 「-」 while 40倍 showed).  It grows left,
 # up and down only, so the gear stays out (left, top, right, bottom).
 PVP_MULTIPLIER_WIDER_GROW = (40, 20, 0, 20)  # 1920×1080 参考
+# The same second look for the setting dialog's 「🍷N倍」 (a player's PC,
+# v0.2.12 2026-10-25: 1倍 showed, three reads missed it, 未能开始战斗).
+# Sideways and down only: the MIN / -5 / +5 / MAX row sits right above, and
+# a 「+5」 read without its sign would pass for 5.
+PVP_SETTING_VALUE_WIDER_GROW = (60, 0, 60, 15)  # 1920×1080 参考
 PVP_AUTO_BATTLE_CLICK_REFERENCE = (2026, 1291)  # 2560×1440 参考
 PVP_STAGE_CLICK_REFERENCE_OFFSET = (0, -75)  # 1920×1080 参考位移
 PVP_BATTLE_START_SCREEN_POINT = (1381, 1061)  # 2560×1440 参考
@@ -143,7 +148,6 @@ PVP_MULTIPLIER_CONFIRM_SCREEN_POINT = (1383, 1007)  # 2560×1440 参考
 # 1080p); the main popup underneath has 取消 and 战斗开始 there, no 确认.
 PVP_SETTING_CONFIRM_REFERENCE_ROI = (700, 700, 600, 100)  # 1920×1080 参考
 PVP_SETTING_CONFIRM_PATTERNS = [r"^确[认定]$"]
-PVP_MAX_BATTLE_COUNT_SCREEN_POINT = (1650, 850)  # 2560×1440 参考
 PVP_AUTO_BATTLE_MENU_OCR_REFERENCE_ROI = (327, 165, 417, 156)  # 1280×720 参考
 PVP_BATTLE_ONGOING_OCR_REFERENCE_ROI = (50, 576, 203, 69)  # 1280×720 参考
 PVP_MULTIPLIER_SETTING_OCR_REFERENCE_ROI = (451, 101, 379, 184)  # 1280×720 参考
@@ -735,7 +739,11 @@ class PVPTask(BaseBD2Task):
             frame = self.capture_frame()
             text = self._ocr_text(frame, name="卡带选择页")
             last_text = text or last_text
-            match_count = self._ocr_pattern_match_count(text, list(QUICK_SWITCH_PAGE_PATTERNS))
+            normalized = self._normalize_text(text)
+            match_count = sum(
+                keyword_read(self._normalize_text(pattern), normalized)
+                for pattern in QUICK_SWITCH_PAGE_PATTERNS
+            )
             self.info_set("卡带选择页 OCR", text or "-")
             self.info_set(
                 "卡带选择页 OCR 命中",
@@ -1474,14 +1482,23 @@ class PVPTask(BaseBD2Task):
             self._click_screen_reference(*option_point, after_sleep=0.5)
             if self._setting_multiplier_matches(option_value):
                 break
+            seen = str(getattr(self, "_multiplier_last_text", "") or "").strip()
             self.log_info(
-                f"镜中之战：倍率选项第{attempt}/{PVP_CLICK_VERIFY_ATTEMPTS}"
-                f"次点击后设置值未回读到 {option_value}"
+                f"镜中之战：按了{'MAX' if option_value == 40 else 'MIN'}后，"
+                f"倍率设置里没读到 {option_value}（读到「{seen or '没有字'}」），"
+                f"第{attempt}/{PVP_CLICK_VERIFY_ATTEMPTS}次"
                 + ("，重试。" if attempt < PVP_CLICK_VERIFY_ATTEMPTS else "。")
             )
         else:
+            # MIN / MAX only set the dialog's own value, so stepping on from
+            # it is harmless; 确认 is judged by the main popup's multiplier
+            # and the cost on 战斗开始, which must both agree (player v0.2.12
+            # 2026-10-25: 1倍 showed but was not read, the run stopped here).
             self.info_set("PVP 倍率 OCR", "未确认")
-            return False
+            self.log_info(
+                f"镜中之战：倍率设置里一直读不准数字，照 {option_value} 倍继续调到"
+                f" {multiplier} 倍，确认后再用主弹窗和战斗开始的消耗核对。"
+            )
 
         # From MIN (1) or MAX (40) the presses that reach the target are
         # known: press them, then read.  A read that is off only steps on
@@ -1668,7 +1685,10 @@ class PVPTask(BaseBD2Task):
             )
             count = capped
         if count <= 0:
-            self._select_max_battle_count()
+            reached = self._select_max_battle_count(multiplier)
+            if reached is None:
+                return False
+            count = reached
         else:
             reached = self._set_battle_count(count)
             if not reached or reached > count:
@@ -1790,17 +1810,101 @@ class PVPTask(BaseBD2Task):
         self.info_set("PVP 战斗开始 OCR", " | ".join(t or "-" for t in texts))
         return None
 
-    def _select_max_battle_count(self) -> None:
+    def _select_max_battle_count(self, multiplier: int) -> int | None:
+        """MAX: as many battles as the free cocktails on screen pay for, at
+        most 40 cocktails (Leo 2026-10-05), set and read back like a chosen
+        count.  The count reached, or None (nothing is started).
+
+        YES-BD2 #63 (2026-10-28): 1倍 with MAX fought one battle.  The game's
+        MAX was pressed once at its place and never read back, and the check
+        after it only asked that the cocktails cover the count shown, so the
+        dialog's 「自动战斗1次」 passed.  (Inferred: the press was swallowed;
+        the player sent no log.)  With more than 40 free cocktails the game's
+        MAX would also have gone past 40.
+        """
         self.info_set("当前阶段", "选择最大战斗次数")
-        self._click_screen_reference(*PVP_MAX_BATTLE_COUNT_SCREEN_POINT, after_sleep=0.8)
+        free_text = ""
+
+        def free_pool():
+            nonlocal free_text
+            free_text = self._ocr_text(
+                self.capture_frame(), name="PVP 免费鸡尾酒", roi=PVP_FREE_COCKTAIL_ROI
+            )
+            return parse_free_cocktails(free_text)
+
+        free = self._read_until(free_pool)
+        if free is None:
+            problem = free_cocktails_problem(free_text)
+            self.log_warning(
+                f"镜中之战：场数选了 MAX，要先看免费鸡尾酒有几杯，{problem}，取消本次战斗。",
+                notify=True,
+            )
+            return None
+        # The battles are set from this number and the day is done after
+        # them: one frame's dropped digit (40 -> 4) fights 4 instead of 40,
+        # or at 10倍 ends the day at once.  It counts once a second read
+        # agrees; a third look outvotes a glitch in either of the first two.
+        reads = [free]
+        agreed = None
+        for _ in range(2):
+            self.sleep(0.4)
+            again = self._read_until(free_pool)
+            if again is not None and again in reads:
+                agreed = again
+                break
+            reads.append(again)
+        seen = " / ".join("没读出" if value is None else str(value) for value in reads)
+        if agreed is None:
+            self.log_warning(
+                f"镜中之战：场数选了 MAX，要先看免费鸡尾酒有几杯，读了 {len(reads)} 次"
+                f"没有两次一样（{seen}），不知道该设几场，取消本次战斗。",
+                notify=True,
+            )
+            return None
+        free = agreed
+        if len(reads) > 1:
+            self.log_info(
+                f"镜中之战：免费鸡尾酒读了 {len(reads) + 1} 次（{seen} / {free}），按 {free} 杯算。"
+            )
+        target = min(free, FREE_COCKTAILS_PER_DAY) // max(1, int(multiplier))
+        if target < 1:
+            self._free_cocktails_short = True
+            self.log_info(f"镜中之战：免费鸡尾酒只剩 {free}，不够 {multiplier} 倍打一场。")
+            return None
+        self.log_info(
+            f"镜中之战：场数 MAX，免费鸡尾酒 {free} 杯、{multiplier} 倍，设为 {target} 场。"
+        )
+        reached = self._set_battle_count(target)
+        if not reached or reached > target:
+            self.log_info(f"镜中之战：未能把战斗次数设为 {target}（MAX）。")
+            return None
+        if reached < target:
+            self.log_info(f"镜中之战：免费鸡尾酒只够 {reached} 场（MAX 算出 {target} 场）。")
+        return reached
 
     def _multiplier_matches(self, multiplier: int, timeout: float = 2.0) -> bool:
+        return self._multiplier_reads(
+            multiplier,
+            self._mf_roi(*PVP_MULTIPLIER_OCR_REFERENCE_ROI),
+            PVP_MULTIPLIER_WIDER_GROW,
+            "PVP 倍率",
+            timeout,
+        )
+
+    def _multiplier_reads(
+        self,
+        multiplier: int,
+        roi: tuple[int, int, int, int],
+        grow: tuple[int, int, int, int],
+        name: str,
+        timeout: float,
+    ) -> bool:
+        """``multiplier`` read in ``roi``, else once more with room around it."""
         patterns = [rf"^{multiplier}$", rf"^{multiplier}倍$"]
-        roi = self._mf_roi(*PVP_MULTIPLIER_OCR_REFERENCE_ROI)
         found, text = self._wait_for_ocr_patterns(
             patterns,
             timeout=timeout,
-            name="PVP 倍率",
+            name=name,
             roi=roi,
             normalize_multiplier=True,
         )
@@ -1809,8 +1913,8 @@ class PVPTask(BaseBD2Task):
                 label
                 for label, _confidence in self._ocr_entries(
                     self.capture_frame(),
-                    "PVP 倍率（放宽范围）",
-                    self._grown_roi(roi, PVP_MULTIPLIER_WIDER_GROW),
+                    f"{name}（放宽范围）",
+                    self._grown_roi(roi, grow),
                 )
             ]
             # One box at a time, as in the small box: a neighbour is its own box.
@@ -1820,6 +1924,7 @@ class PVPTask(BaseBD2Task):
             )
             if found or not text:
                 text = " ".join(labels)
+        self._multiplier_last_text = text
         self.info_set("PVP 倍率 OCR", text or "-")
         return found
 
@@ -1833,15 +1938,13 @@ class PVPTask(BaseBD2Task):
         return new_x, new_y, x + width + right - new_x, y + height + bottom - new_y
 
     def _setting_multiplier_matches(self, multiplier: int) -> bool:
-        found, text = self._wait_for_ocr_patterns(
-            [rf"^{multiplier}$", rf"^{multiplier}倍$"],
-            timeout=0.8,
-            name="PVP 倍率设置值",
-            roi=self._mf_roi(*PVP_MULTIPLIER_SETTING_VALUE_OCR_REFERENCE_ROI),
-            normalize_multiplier=True,
+        return self._multiplier_reads(
+            multiplier,
+            self._mf_roi(*PVP_MULTIPLIER_SETTING_VALUE_OCR_REFERENCE_ROI),
+            PVP_SETTING_VALUE_WIDER_GROW,
+            "PVP 倍率设置值",
+            0.8,
         )
-        self.info_set("PVP 倍率 OCR", text or "-")
-        return found
 
     def _wait_result_and_leave(self, multiplier: int) -> bool:
         self.info_set("当前阶段", "等待战斗结算")

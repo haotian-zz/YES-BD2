@@ -132,6 +132,22 @@ class MonitorTest(unittest.TestCase):
         self._click(monitor, 100)
         self.assertEqual(2, executor.stop_current_task.call_count)
 
+    def test_a_broken_hook_says_so_once(self):
+        # A crash in the hook used to vanish: the stop-on-touch guard could
+        # quietly stop working and no player log showed why.
+        monitor, executor, _task = self._monitor()
+        monitor.in_clone = False
+        data = SimpleNamespace(flags=0, pt=SimpleNamespace(x=10, y=10))
+        with (
+            mock.patch("win32gui.WindowFromPoint", side_effect=OSError("denied")),
+            mock.patch.object(takeover.logger, "warning") as warning,
+        ):
+            for _ in range(3):
+                self.assertIs(False, monitor.on_mouse(LBUTTONDOWN, data))
+        warning.assert_called_once()
+        self.assertIn("鼠标检测出错", warning.call_args[0][0])
+        executor.stop_current_task.assert_not_called()
+
 
 class PausedRunTest(unittest.TestCase):
     """The plan's default for decision 8: 暂停 is there so the player can
@@ -174,6 +190,33 @@ class PausedRunTest(unittest.TestCase):
         with mock.patch.object(takeover.threading, "Thread", inline):
             MonitorTest._click(self, monitor, 100)
         executor.stop_current_task.assert_called_once()
+
+
+class StatusBarPressTest(unittest.TestCase):
+    """Leo's 4K 2026-10-28 16:02: his quick press on the bar's ▶ beat the
+    button waking up, went through to the paused game and counted as him
+    using it, so 继续 went home instead of to the picked stage."""
+
+    def test_a_press_on_a_bar_button_is_never_the_player_using_the_game(self):
+        from src.utils import game_status_bar
+
+        monitor, executor, task = PausedRunTest._monitor(self)
+        game_status_bar.set_buttons(900, [(0, 0, 50, 50)])  # (10, 10) is on a button
+        self.addCleanup(game_status_bar.unregister, 900)
+        MonitorTest._click(self, monitor, 100)
+        self.assertFalse(getattr(task, "player_stepped_in", False))
+        task.paused = False
+        MonitorTest._click(self, monitor, 100)
+        executor.stop_current_task.assert_not_called()
+
+    def test_off_the_buttons_the_paused_game_still_counts(self):
+        from src.utils import game_status_bar
+
+        monitor, _executor, task = PausedRunTest._monitor(self)
+        game_status_bar.set_buttons(900, [(200, 200, 250, 250)])
+        self.addCleanup(game_status_bar.unregister, 900)
+        MonitorTest._click(self, monitor, 100)
+        self.assertTrue(task.player_stepped_in)
 
 
 class InstallTest(unittest.TestCase):

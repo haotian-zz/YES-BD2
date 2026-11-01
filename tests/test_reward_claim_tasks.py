@@ -6,7 +6,7 @@ from unittest import mock
 import cv2
 import numpy as np
 
-from src.tasks.claim_page import find_red_badges
+from src.tasks.claim_page import CLAIM_GREY, CLAIM_NO_BUTTON, CLAIM_PRESSED, find_red_badges
 from src.tasks.RewardClaimTasks import (
     ACHIEVEMENT_LEVEL_TAB_POINT,
     SHOP_FREE_ICON_ABOVE_TEXT,
@@ -20,10 +20,14 @@ from src.tasks.RewardClaimTasks import (
     ClearPackRewardTask,
     PASS_BADGE_STRIP,
     PASS_BADGE_TO_CARD_CENTER,
-    PASS_LEVEL_TAB_POINT,
-    PASS_MISSION_TAB_POINT,
+    PASS_CLAIM_BUTTON,
+    PASS_CLAIM_BUTTON_WIDE,
+    PASS_TAB_BADGE_STRIP,
     PassRewardTask,
 )
+
+PASS_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "pass" / "pass_page_badges_fhd.png"
+CHARACTER_PASS = Path(__file__).resolve().parent / "fixtures" / "pass"
 
 
 def box(name, y=0):
@@ -52,7 +56,8 @@ class PassBadgeTest(unittest.TestCase):
         task.info_set = lambda key, value: task.info.__setitem__(key, value)
         task.logs = []
         task.log_info = lambda text, **_kwargs: task.logs.append(text)
-        task.state = {"scrolls": 0, "claims": [], "all_claims": []}
+        task.log_warning = task.log_info
+        task.state = {"scrolls": 0, "claims": []}
         task.capture_frame = lambda: badged_frame(screens(task.state)[0])
         task._roi_boxes = lambda _frame, _roi, _name: screens(task.state)[1]
         task._wait_boxes = lambda _roi, _name, _ok, timeout=0: screens(task.state)[1]
@@ -66,10 +71,8 @@ class PassBadgeTest(unittest.TestCase):
         task._click_until_changed = lambda _label, click, _rois, **_kwargs: click() or True
 
         def fake_claim(label, button, _title):
-            task.state["all_claims"].append(label)
-            # Tab claims are checked in their own test; keep one per pass here.
-            if not label.endswith(("任务", "等级")):
-                task.state["claims"].append(label)
+            task.state["claims"].append(label)
+            task._claim_outcome = CLAIM_PRESSED
             return claim_ok
 
         task._claim_all = fake_claim
@@ -92,20 +95,8 @@ class PassBadgeTest(unittest.TestCase):
         self.assertTrue(PassRewardTask.run_claim(task))
         self.assertEqual(["基础通行证", "服装通行证"], task.state["claims"])
         self.assertEqual(
-            [
-                (425, 255 + PASS_BADGE_TO_CARD_CENTER),
-                PASS_MISSION_TAB_POINT,
-                PASS_LEVEL_TAB_POINT,
-                (425, 469 + PASS_BADGE_TO_CARD_CENTER),
-                PASS_MISSION_TAB_POINT,
-                PASS_LEVEL_TAB_POINT,
-            ],
+            [(425, 255 + PASS_BADGE_TO_CARD_CENTER), (425, 469 + PASS_BADGE_TO_CARD_CENTER)],
             task.clicks,
-        )
-        self.assertEqual(
-            ["基础通行证", "基础通行证任务", "基础通行证等级",
-             "服装通行证", "服装通行证任务", "服装通行证等级"],
-            task.state["all_claims"],
         )
         self.assertEqual([True], task.left)
         self.assertEqual(2, task.info["通行证数量"])
@@ -137,8 +128,6 @@ class PassBadgeTest(unittest.TestCase):
     def test_claim_that_stays_lit_fails_the_task(self):
         task = self._task(lambda _state: ([255], [box("基础通行证", 300)]), claim_ok=False)
         self.assertFalse(PassRewardTask.run_claim(task))
-        # A failed LEVEL claim stops before touching the tabs.
-        self.assertEqual(["基础通行证"], task.state["all_claims"])
         self.assertEqual([], task.left)
         self.assertIn("基础通行证", task.info["状态"])
 
@@ -189,6 +178,99 @@ class AchievementRewardTest(unittest.TestCase):
         self.assertFalse(task.run_claim())
         self.assertNotIn("claim 成就等级", task.steps)
         self.assertEqual("fail 切换成就等级", task.steps[-1])
+
+class PassFallbackTest(unittest.TestCase):
+    """Player 2026-10-26: 角色通行证 never claimed, no error, the task 完成.
+    A badged pass whose 全部获得 is missing or grey is tried on the whole
+    panel and on the red-badged tabs; what is still left is said."""
+
+    def _task(self, outcomes, tab_badges=()):
+        """``outcomes`` maps a ClaimButton to the outcomes of its presses."""
+        task = object.__new__(PassRewardTask)
+        task.name = "领取通行证"
+        task.info_set = lambda *_a: None
+        task.logs, task.warnings, task.claims, task.clicks = [], [], [], []
+        task.log_info = lambda text, **_k: task.logs.append(text)
+        task.log_warning = lambda text, **_k: task.warnings.append(text)
+        task._pass_misses = {}
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        for y in tab_badges:
+            frame[y - 8 : y + 8, PASS_TAB_BADGE_STRIP[0] + 10 : PASS_TAB_BADGE_STRIP[0] + 27] = (
+                0, 0, 230,
+            )
+        task.capture_frame = lambda: frame
+        task._click_reference = lambda x, y, **_k: task.clicks.append((x, y))
+        queues = {key: list(value) for key, value in outcomes.items()}
+
+        def fake_claim(label, button, _title):
+            task.claims.append(label)
+            task._claim_outcome = queues[button].pop(0)
+            return True
+
+        task._claim_all = fake_claim
+        return task
+
+    def test_missing_button_is_found_on_the_whole_panel(self):
+        task = self._task({PASS_CLAIM_BUTTON_WIDE: [CLAIM_PRESSED]})
+        task._claim_outcome = CLAIM_NO_BUTTON
+        self.assertTrue(PassRewardTask._claim_pass_elsewhere(task, "角色通行证"))
+        self.assertEqual(["角色通行证（整块面板）"], task.claims)
+        self.assertEqual({}, task._pass_misses)
+
+    def test_grey_button_opens_the_badged_tab_and_claims_there(self):
+        task = self._task({PASS_CLAIM_BUTTON: [CLAIM_PRESSED]}, tab_badges=(658,))
+        task._claim_outcome = CLAIM_GREY
+        self.assertTrue(PassRewardTask._claim_pass_elsewhere(task, "角色通行证"))
+        self.assertEqual([(1593, 680)], task.clicks)
+        self.assertEqual(["角色通行证（右侧分页）"], task.claims)
+        self.assertEqual({}, task._pass_misses)
+
+    def test_nothing_anywhere_keeps_the_reason(self):
+        task = self._task({PASS_CLAIM_BUTTON_WIDE: [CLAIM_NO_BUTTON]})
+        task._claim_outcome = CLAIM_NO_BUTTON
+        self.assertTrue(PassRewardTask._claim_pass_elsewhere(task, "角色通行证"))
+        self.assertEqual([], task.clicks)
+        self.assertIn("没看到「全部获得」", task._pass_misses["角色通行证"])
+
+    def test_pressed_claim_needs_no_fallback(self):
+        task = self._task({})
+        task._claim_outcome = CLAIM_PRESSED
+        self.assertTrue(PassRewardTask._claim_pass_elsewhere(task, "角色通行证"))
+        self.assertEqual([], task.claims)
+
+    def test_unclaimed_badge_is_a_warning_and_a_report_note(self):
+        task = PassBadgeTest._task(PassBadgeTest(), lambda _s: ([255], [box("角色通行证", 300)]))
+        task.warnings = []
+        task.log_warning = lambda text, **_k: task.warnings.append(text)
+
+        def grey_claim(label, _button, _title):
+            task.state["claims"].append(label)
+            task._claim_outcome = CLAIM_GREY
+            return True
+
+        task._claim_all = grey_claim
+        with mock.patch("src.tasks.RewardClaimTasks.run_report.add_current_note") as note:
+            self.assertTrue(PassRewardTask.run_claim(task))
+        self.assertTrue(any("角色通行证" in w and "灰的" in w for w in task.warnings))
+        self.assertIn("没领到", note.call_args.args[0])
+
+    def test_real_character_pass_claimables_sit_on_the_mission_tab(self):
+        # 毁灭之星艾瑞克角色通行证, 4K clone 2026-10-26: grey on the star tab,
+        # red ◆! on the 任务 tab, whose 全部获得 is lit.
+        from src.tasks.claim_page import claim_button_dimmed
+
+        button = SimpleNamespace(x=1396, y=750, width=90, height=28)
+        reward = cv2.imread(str(CHARACTER_PASS / "character_pass_reward_tab_fhd.png"))
+        mission = cv2.imread(str(CHARACTER_PASS / "character_pass_mission_tab_fhd.png"))
+        self.assertTrue(claim_button_dimmed(reward, button))
+        self.assertEqual([(1593, 680)], PassRewardTask._badged_pass_tabs(reward))
+        self.assertFalse(claim_button_dimmed(mission, button))
+
+    def test_real_pass_page_badges(self):
+        frame = cv2.imread(str(PASS_FIXTURE), cv2.IMREAD_COLOR)
+        self.assertIsNotNone(frame)
+        self.assertEqual([288, 394], find_red_badges(frame, PASS_BADGE_STRIP))
+        self.assertEqual([(1593, 680)], PassRewardTask._badged_pass_tabs(frame))
 
 
 class ClickUntilChangedTest(unittest.TestCase):

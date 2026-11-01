@@ -229,15 +229,12 @@ STORY_BADGE_SPECS = tuple(
 )
 # The 角色游戏卡 tab draws the same number circles on blue card frames: the
 # story templates scored 0.43-0.76 there (live 2K 2026-09-30), so the tab has
-# its own, cut at the badge centres (93 + 180 x (n - 1), 936) of a 1080p
-# frame of the tab.
-# All ten character cards sit in view in fixed slots (1080p): the badge of
-# card n is looked for only in its own slot, and its template must beat the
-# other nine there.  Live 2K: the right one scored 0.92-0.96, the others
-# <= 0.86 at the same slot (not the story tab's 0.95 floor).
-CHARACTER_BADGE_FIRST_X = 93
-CHARACTER_BADGE_SPACING = 180
-CHARACTER_BADGE_Y = 936
+# its own, cut at the badge centres of a 1080p frame of the tab.
+# The badge of card n is looked for along the whole row (pinned cards come
+# first and the row slides once it holds more than fit, YES-BD2 #41), and at
+# that spot its template must beat the other nine.  Live 2K: the right one
+# scored 0.92-0.96, the others <= 0.86 at the same spot (not the story tab's
+# 0.95 floor).  The window is the half-width of that spot (1080p px).
 CHARACTER_BADGE_WINDOW = 34
 CHARACTER_BADGE_MIN_SCORE = 0.85
 CHARACTER_BADGE_MIN_MARGIN = 0.08
@@ -610,6 +607,9 @@ AREA_MAP_OPEN_SECONDS = 3.0
 AREA_MAP_KEY = "M"
 # The game's interaction key: talks to the merchant when his prompt is unread.
 MERCHANT_TALK_KEY = "F"
+# The merchant menu's own key for 商店, shown under its bag icon bottom right
+# (player frame 2026-10-28; Leo 「像這個就可以按f2」).
+MERCHANT_SHOP_KEY = "F2"
 # 箱庭内角色位置保持在上次离开处；不在商人旁时经小地图导航菜单的"商店"
 # 目的地传送到商人面前（已在商店区域内则改点区域地图上的商人图标）。
 MERCHANT_NAV_GUIDE_TEMPLATE = TemplateSpec(
@@ -782,6 +782,9 @@ class AreaMapContext:
     overlap_arrow: MatchResult | None
     back_button: MatchResult | None
     confirmation_text: str = ""
+    # Taken as the target without reading its name cleanly (the seek's last
+    # resort): the arrival is then checked on the map, never by the page.
+    guessed: bool = False
 
     @property
     def is_area_map(self) -> bool:
@@ -879,9 +882,27 @@ SANDBOX_CONFIRM_ACTION_TEMPLATES = (
 # icons share its round frame and scored 0.856 / 0.838 (2026-09-30): a high
 # floor and a smaller lead keep those out without missing the real one.
 # Live 1080p 2026-10-20 (ch14 from the town): the circle 0.929 against 0.863,
-# a lead of 0.066, and the map change failed twice at 0.07.
+# a lead of 0.066, and the map change failed twice at 0.07.  Live 1080p
+# 2026-10-27 (第13章 华特波尔镇, snow): 0.915 against 0.868, a lead of 0.047,
+# and the chapter failed on both runs at 0.06.
+# The lead is gone: every map asked for a new margin.  These icons share one
+# round frame, so the frame score only says "a round icon"; the glyph inside
+# it says which.  The circle's glyph correlates 0.94-0.95 with the template's,
+# other round icons and plain map 0.45 at most (snow, hunting ground and
+# square fixtures).  A circle whose glyph the player marker covers still
+# outscores every other round icon on its frame (never above 0.87 so far).
 SANDBOX_MAP_TELEPORT_MIN_PIXEL = 0.90
-SANDBOX_MAP_TELEPORT_PIXEL_MARGIN = 0.06
+SANDBOX_MAP_TELEPORT_GLYPH_RADIUS = 12.5 / 40  # of the icon width
+SANDBOX_MAP_TELEPORT_MIN_GLYPH = 0.70
+# How far from a map label (OCR centre) its icon may sit, as a share of the
+# frame height: the 迪尔索特旅馆 label's centre is 18 px from its icon at 1080p.
+SANDBOX_MAP_LABEL_ICON_REACH = 40 / 1080
+# Where the area map draws its place labels: between the title row and the
+# footer, left of the page arrow area's far side.
+AREA_MAP_LABELS_RELATIVE_ROI = (0.03, 0.12, 0.8, 0.88)
+# Share of strong red in an icon's box above which it is a battle exit (red
+# crossed swords, ~25 %); other round icons 0 %, a red-haired portrait 9 %.
+SANDBOX_MAP_BATTLE_EXIT_MIN_RED = 0.15
 SANDBOX_MAP_TELEPORT_TEMPLATE = TemplateSpec(
     "箱庭地图传送阵模板",
     "image/green/SandboxNviTpCircleMapGE.png",
@@ -1039,6 +1060,16 @@ TELEPORT_MAP_FIRST_PAGE_LIMIT = AREA_MAP_SCAN_LIMIT
 # Pages flipped in one direction while looking for a map by name (chapter 18
 # has 10 pages; a flip that changes nothing ends the direction early).
 TELEPORT_MAP_SEEK_LIMIT = 12
+# A teleport-map page read this close to a map's name (0..1, the name
+# compared with the read minus its 安全/战斗 tag) counts as that map's page
+# when no map is named cleanly: one wrong character in four is 0.75, the
+# town's inn 拉勒凯旅馆 against 拉勒凯镇 is 0.67 (Leo 2026-10-31).
+LOOSE_PAGE_NAME_MIN_RATIO = 0.75
+# An unresolved page read this close to one of the card's maps (or empty)
+# is read again bordered and enlarged at these scales before it counts as
+# another page; a clean read of an unrelated page is not.
+TELEPORT_MAP_TITLE_REREAD_MIN_RATIO = 0.4
+TELEPORT_MAP_TITLE_REREAD_SCALES = (2.0, 3.0)
 # Teleport-map page order (left to right) by target key, for cards whose
 # pages do not follow ``card.targets`` (safe zone first).  Nightmare Winter's
 # safe zone 雷瓦汀据点 is the LAST page, so from it the battle maps are to the

@@ -1,4 +1,5 @@
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -250,6 +251,16 @@ def _escape_when_stuck(task) -> bool:
 def _home_after_step_in(task) -> bool:
     name = getattr(task, "name", "")
     cls = type(task)
+    leave = getattr(task, "leave_after_step_in", None)
+    if callable(leave):
+        # The task's own way out of where it stood (塔洛斯: a fight, left by
+        # ‖ → 离开 → 确认), where back, H and Esc do nothing.
+        try:
+            leave()
+        except (TaskDisabledException, FinishedException):
+            raise
+        except Exception as error:
+            task.log_info(f"{name}：退出原来的画面时出错（{error}），直接回主页。")
     home_task = getattr(cls, "start_from_home", False) or getattr(
         cls, "recover_home_on_failure", False
     )
@@ -402,8 +413,8 @@ class BaseBD2Task(BaseTask):
                             self._leave_home_after_failed_run()
                         except (TaskDisabledException, FinishedException):
                             raise
-                        except Exception:
-                            pass
+                        except Exception as home_exc:
+                            logger.warning(f"{self.name}：失败后回主页也出错：{home_exc!r}")
                     raise
                 if result is False:
                     if keep and not getattr(self, "child_tasks", None):
@@ -517,6 +528,26 @@ class BaseBD2Task(BaseTask):
         """Publish a completion popup unless this task is running as a batch child."""
 
         log_task_completion(self, message)
+
+    def done_already(self, note: str) -> None:
+        """The screen showed this chore was already done today (by hand, on
+        another PC or in another tool): 一键日常 lists it as 跳过 with ``note``
+        instead of 完成 (Leo 2026-10-28 「應該判定已跳過 已完成就好」)."""
+        self.done_already_note = note
+
+    def home_after_done(self, name: str) -> bool:
+        """The task's work is done but its way home did not show home: home
+        is reached through the recovery flow and the run still counts as
+        done (a step is judged on its own work; player 2026-10-31: 白嫖抽抽乐
+        drew both pools, then a swallowed back press reported it 失败).
+        True once home is confirmed."""
+        from src.tasks.recovery import recover_to_home
+
+        self.log_info(f"{name}：已完成，但回主页时没认出主页，走回主页流程。")
+        if recover_to_home(self):
+            return True
+        self.log_info(f"{name}：已完成，但没能回到主页。")
+        return False
 
     def _task_info_lock(self) -> threading.RLock:
         """The per-instance info lock, or a shared fallback for odd instances.
@@ -1122,7 +1153,11 @@ class BaseBD2Task(BaseTask):
             finally:
                 win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
 
-        self.operate(action, block=True, restore_cursor=True)
+        from src.utils import game_status_bar
+
+        # A real press: the in-game status bar's buttons let it through.
+        with game_status_bar.hold_clicks():
+            self.operate(action, block=True, restore_cursor=True)
         if not dragged:
             self.info_set("拖动", "未拖动：游戏窗口不在最前面或被其他窗口遮住")
             self.log_warning(
@@ -1133,6 +1168,61 @@ class BaseBD2Task(BaseTask):
         self.sleep(after_sleep)
         return True
 
+    def wheel_client_real(
+        self,
+        relative_point: tuple[float, float],
+        notches: int,
+        interval: float = 0.12,
+        after_sleep: float = 0.0,
+    ) -> bool:
+        """Turn the real mouse wheel over a relative client point.
+
+        塔洛斯战术教材's top-down zoom ignores the posted WM_MOUSEWHEEL that
+        scroll_client sends (4K PC clone 2026-10-31: six posted notches left
+        the grid at 1.21 and no 「N%」 bar showed; one real notch turned it at
+        once).  Like drag_client, only onto the game in the foreground; the
+        cursor goes back afterwards and the takeover monitor ignores it
+        (injected input).  False when nothing was turned.
+        """
+
+        turned = []
+        frame = self.capture_frame()
+        height, width = frame.shape[:2]
+        x = round(max(0.0, min(1.0, relative_point[0])) * width)
+        y = round(max(0.0, min(1.0, relative_point[1])) * height)
+
+        def action():
+            import win32api
+            import win32con
+
+            if not self._bring_game_to_foreground():
+                return
+            interaction = getattr(self.executor, "interaction", None)
+            if interaction is not None and hasattr(interaction, "force_activate"):
+                interaction.force_activate()
+            elif interaction is not None and hasattr(interaction, "try_activate"):
+                interaction.try_activate()
+            capture = getattr(interaction, "capture", None)
+            if capture is None or not hasattr(capture, "get_abs_cords"):
+                return
+            point = capture.get_abs_cords(x, y)
+            if not self._point_on_game(point):
+                return
+            win32api.SetCursorPos(point)
+            time.sleep(SCROLL_POINTER_SETTLE_SECONDS)
+            delta = win32con.WHEEL_DELTA if notches > 0 else -win32con.WHEEL_DELTA
+            for index in range(abs(int(notches))):
+                win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, delta, 0)
+                turned.append(True)
+                if index + 1 < abs(int(notches)):
+                    time.sleep(max(0.0, float(interval)))
+            time.sleep(SCROLL_POINTER_SETTLE_SECONDS)
+
+        self.operate(action, block=True, restore_cursor=True)
+        if turned:
+            self.sleep(after_sleep)
+        return bool(turned)
+
     def _point_on_game(self, point: tuple[int, int]) -> bool:
         """The top-level window under a screen point is the game."""
 
@@ -1140,7 +1230,10 @@ class BaseBD2Task(BaseTask):
 
         handles = self._game_window_handles()
         try:
-            hwnd = win32gui.WindowFromPoint(tuple(int(value) for value in point))
+            from src.utils import game_status_bar
+
+            # Through the in-game status bar: it never counts as covering.
+            hwnd = game_status_bar.window_at(tuple(int(value) for value in point))
             root = win32gui.GetAncestor(hwnd, 2)  # GA_ROOT
         except Exception:
             return False
@@ -1215,9 +1308,15 @@ class BaseBD2Task(BaseTask):
         mouse press or a read failed (Leo 2026-10-11 「不可以說認不到辨識不到就
         卡住 你可以用快捷鍵」).  Sent only with the game in the foreground."""
         letter = key.strip().upper()
-        if len(letter) != 1 or not letter.isalnum():
+        function = re.fullmatch(r"F([1-9]|1[0-2])", letter)
+        if function:
+            # F1-F12, as the game shows them under field buttons (F2 商店).
+            code = 0x6F + int(function.group(1))
+        elif len(letter) == 1 and letter.isalnum():
+            code = ord(letter)
+        else:
             raise ValueError(f"not a single shortcut key: {key!r}")
-        if not self._send_game_key(ord(letter), KEY_TAP_SECONDS):
+        if not self._send_game_key(code, KEY_TAP_SECONDS):
             self.info_set("快捷键", f"{letter} 未发送：游戏窗口不在最前面")
             self.log_warning(f"游戏窗口不在最前面，快捷键 {letter} 没有发送。")
             return False

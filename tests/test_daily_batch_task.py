@@ -8,6 +8,7 @@ from unittest import mock
 
 from src.config import config
 from src.tasks import run_report, scheduler, weekly_ticks
+from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.DailyBatchTask import (
     CLOSE_GAME_FAILED_NOTE,
     CLOSE_GAME_KEY,
@@ -161,6 +162,54 @@ class DailyBatchTaskTest(unittest.TestCase):
         self.assertIs(original_first_config, first.config)
         self.assertIs(original_second_config, second.config)
         self.assertEqual(2, len(resets))
+
+    def test_a_scheduled_slots_own_items_run_and_the_ticks_stay(self):
+        # Leo 2026-10-29 「也要選擇該時段進行的任務」.
+        from src.utils import scheduled_start
+
+        class First:
+            pass
+
+        class Second:
+            pass
+
+        calls = []
+        specs = (DailyBatchChild("第一项", First), DailyBatchChild("第二项", Second))
+        ticks = {"启用": True, "第一项": True, "第二项": False}
+        task, _resets = self.make_task(
+            {First: _ChildTask("first", calls), Second: _ChildTask("second", calls)},
+            specs,
+            dict(ticks),
+        )
+        self.addCleanup(scheduled_start.mark_run_pending, False)
+        scheduled_start.mark_run_pending(tasks=["第二项"])
+        self.assertTrue(DailyBatchTask.run(task))
+        self.assertEqual([("second", True)], calls)
+        self.assertEqual(ticks, task.config)
+        # The next run (by the player) goes by the ticks again.
+        calls.clear()
+        self.assertTrue(DailyBatchTask.run(task))
+        self.assertEqual([("first", True)], calls)
+
+    def test_a_scheduled_slots_own_settings_apply_to_that_run_only(self):
+        # Leo 2026-10-29 「鏡中之戰也可以選倍數那些」.
+        from src.utils import scheduled_start
+
+        class First:
+            pass
+
+        seen = []
+        child = _ChildTask("first", [])
+        child.run = lambda: seen.append(child.config.get("保留配置")) or True
+        task, _resets = self.make_task(
+            {First: child}, (DailyBatchChild("第一项", First),), {"启用": True, "第一项": True}
+        )
+        self.addCleanup(scheduled_start.mark_run_pending, False)
+        scheduled_start.mark_run_pending(settings={"第一项": {"保留配置": 3}})
+        self.assertTrue(DailyBatchTask.run(task))
+        self.assertTrue(DailyBatchTask.run(task))
+        self.assertEqual([3, 1], seen)
+        self.assertEqual(1, child.config["保留配置"])
 
     def test_progress_is_published_after_each_child(self):
         class First:
@@ -584,6 +633,34 @@ class DailyBatchTaskTest(unittest.TestCase):
         self.assertFalse(
             hasattr(child, "_completion_notification_suppression_depth")
         )
+
+    def test_child_that_found_its_chore_already_done_is_listed_as_skipped(self):
+        # Leo 2026-10-28: the wish made by hand earlier → 「應該判定已跳過 已完成就好」.
+        class Goddess:
+            pass
+
+        notifications = []
+        child = _ChildTask("goddess", [])
+        child.done_already_note = "上一次留下的"
+
+        def run_child():
+            self.assertEqual("", child.done_already_note)
+            BaseBD2Task.done_already(child, "今天已经许愿过")
+            return True
+
+        child.run = run_child
+        specs = (DailyBatchChild("广场女神像", Goddess),)
+        task, _resets = self.make_task(
+            {Goddess: child}, specs, {"启用": True, "广场女神像": True}
+        )
+        task.log_info = lambda message, notify=False: notifications.append(message)
+
+        self.assertTrue(DailyBatchTask.run(task))
+        self.assertEqual("-", task.info.get("完成"))
+        self.assertEqual("广场女神像", task.info.get("跳过"))
+        self.assertEqual("-", task.info.get("失败"))
+        self.assertIn("一键完成日常：广场女神像 今天已经许愿过，跳过。", notifications)
+        self.assertIn("一键完成日常完成：已执行 0 项，跳过 1 项。", notifications)
 
     def test_incomplete_mode_skips_children_completed_today_without_mutating_config(self):
         class First:

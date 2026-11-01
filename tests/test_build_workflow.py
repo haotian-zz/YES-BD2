@@ -109,6 +109,28 @@ class BuildWorkflowTest(unittest.TestCase):
         self.assertEqual(6, self.workflow.count("v1.2.3"))
         self.assertIn('[string]$Version = "v1.2.3"', script)
 
+    def test_launcher_times_the_pip_sources_and_uses_the_fastest(self):
+        # A player 2026-10-22: Aliyun gave 80-100 kB/s and the install looked
+        # stuck for an hour.
+        script = (ROOT / "scripts" / "prepare_pyappify_launcher.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("async fn fastest_pip_index_urls", script)
+        self.assertIn("let (fastest, second_fastest) = fastest_pip_index_urls(app_name).await;", script)
+        # The probe file is the wheel this install really downloads.
+        requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+        self.assertIn("openvino==2026.2.1 ", requirements)
+        self.assertIn("openvino-2026.2.1-21919-cp312-cp312-win_amd64.whl", script)
+        for index in (
+            "https://mirrors.aliyun.com/pypi/simple/",
+            "https://pypi.tuna.tsinghua.edu.cn/simple",
+            "https://mirrors.cloud.tencent.com/pypi/simple/",
+            "https://repo.huaweicloud.com/repository/pypi/simple/",
+            "https://mirrors.ustc.edu.cn/pypi/simple/",
+            "https://pypi.org/simple/",
+        ):
+            self.assertIn(f'"{index}"', script)
+
     def test_launcher_uses_project_icon(self):
         self.assertIn('icon: "icons/icon.png"', self.pyappify_config)
         self.assertTrue((ROOT / "icons" / "icon.png").is_file())
@@ -141,7 +163,9 @@ class BuildWorkflowTest(unittest.TestCase):
         script = (ROOT / "scripts" / "prepare_pyappify_launcher.ps1").read_text(
             encoding="utf-8"
         )
-        self.assertIn("if git::update_server_reachable(&git_url).await {", script)
+        # The check now also tries the relay (10-20), still through the same
+        # short-limit probe.
+        self.assertIn("let answer = if update_server_reachable(git_url).await {", script)
         self.assertIn("tokio::time::timeout(UPDATE_CHECK_LIMIT, check)", script)
         self.assertIn(
             "git::get_local_tags_and_current_version(repo_path).await?", script
@@ -188,6 +212,16 @@ class BuildWorkflowTest(unittest.TestCase):
         self.assertIn("match if from_env { None } else { windows_proxy_url() } {", script)
         self.assertIn('wide("ProxyEnable")', script)
         self.assertIn("fn proxy_url_from_setting(setting: &str) -> Option<String> {", script)
+
+    def test_launcher_updates_through_the_relay_when_github_is_unreachable(self):
+        # Leo 10-20: players who can't reach GitHub shouldn't have to set
+        # anything up. GitHub first, then YES-BD2's own relay.
+        script = (ROOT / "scripts" / "prepare_pyappify_launcher.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("pub async fn reachable_git_url(git_url: &str) -> Option<String> {", script)
+        self.assertIn("if git::reachable_git_url(&git_url).await.is_some() {", script)
+        self.assertIn("    let url = reachable_git_url(&profile.git_url)`n", script)
 
     def test_launcher_log_ends_in_txt(self):
         # GitHub refused the extensionless app.2026-10-10 as an attachment.

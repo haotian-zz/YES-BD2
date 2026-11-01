@@ -127,6 +127,7 @@ from src.utils.home_confirmation import (
     home_left_column_hits,
     home_left_column_brightness,
 )
+from src.utils.ocr_utils import keyword_read
 from src.utils.wait_limits import LOADING_MAX_SECONDS, STUCK_SECONDS, is_loading_dark, load_wait, scene_at_press
 
 __all__ = [
@@ -505,22 +506,27 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
 
         # 交互菜单也含仓库标题，直接落回共享分类会被商店分支命中；
         # 须先用同帧交互选项与技能卡确认商人身份。
+        if self._merchant_menu_in_frame(frame):
+            return ScreenState.MERCHANT_DIALOG
+        return self.classify(frame)
+
+    def _merchant_menu_in_frame(self, frame) -> bool:
+        """The merchant's 对话/商店 menu: its option bubbles and talent cards."""
         options_passed, _ = self._ocr_keywords_in_frame(
             frame,
             ("对话", "商店"),
             "跑商商人交互选项",
             relative_roi=TRADE_MERCHANT_OPTIONS_REGION,
         )
-        if options_passed:
-            talents_passed, _ = self._ocr_keywords_in_frame(
-                frame,
-                ("天赋技能", "选择"),
-                "跑商商人天赋技能",
-                relative_roi=TRADE_MERCHANT_TALENTS_REGION,
-            )
-            if talents_passed:
-                return ScreenState.MERCHANT_DIALOG
-        return self.classify(frame)
+        if not options_passed:
+            return False
+        talents_passed, _ = self._ocr_keywords_in_frame(
+            frame,
+            ("天赋技能", "选择"),
+            "跑商商人天赋技能",
+            relative_roi=TRADE_MERCHANT_TALENTS_REGION,
+        )
+        return bool(talents_passed)
 
     @staticmethod
     def _shop_page_text(text: str) -> bool:
@@ -667,7 +673,7 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
                     continue
             self.task.sleep(interval)
         self.task.log_warning(
-            "跑商：未同时确认左列关键词、亮度和抽抽乐文字，"
+            "跑商：还没认出主页（左边按钮字样、画面亮度、抽抽乐字样没有同时对上），"
             f"left={last_left_hits}/{HOME_LEFT_COLUMN_REQUIRED_HITS}, "
             f"p95={last_p95:.0f}/{HOME_DIMMED_P95_THRESHOLD:.0f}, ocr={last_gacha_text or '-'}。"
         )
@@ -824,7 +830,7 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
                 relative_roi=relative_roi,
             )
         normalized = normalize_text(self.vision.simplify(text))
-        matched = sum(value in normalized for value in required)
+        matched = sum(keyword_read(value, normalized) for value in required)
         self._status(f"{name} OCR命中", f"{matched}/{len(required)}")
         return matched == len(required), text
 

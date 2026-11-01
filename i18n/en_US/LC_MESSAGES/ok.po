@@ -3245,8 +3245,6 @@ msgstr "Delete this time slot"
 msgid "游戏每天重置后"
 msgstr "After the daily game reset"
 
-msgid "只开关这个时段"
-msgstr "Turn only this time slot on or off"
 
 msgid "时间到自动打开游戏，跑今天还没做的"
 msgstr "Opens the game at the set time and runs what is left today"
@@ -3257,11 +3255,7 @@ msgstr "Add time slot"
 msgid "没选星期，这个时段不会跑"
 msgstr "No day picked: this slot will not run"
 
-msgid "和另一个时段隔不到 1 小时，请错开"
-msgstr "Less than 1 hour from another slot; move one of them"
 
-msgid "电脑完全关机时不会启动；睡眠中可以叫醒"
-msgstr "Does not start while the PC is shut down; a sleeping PC can be woken"
 
 msgid "最多 {n} 个时段"
 msgstr "At most {n} time slots"
@@ -3451,3 +3445,184 @@ msgstr "Farming setup"
 
 msgid "跑图前，游戏里先设好这三样（{n}/3）"
 msgstr "Set these three in the game before farming ({n}/3)"
+
+msgid "网络慢时的等待"
+msgstr "Waits on a slow network"
+
+msgid "打开游戏 {start} 秒 · 登录 {login} 秒"
+msgstr "Open game {start} s · Login {login} s"
+
+msgid "网络或电脑慢、常常等到超时的话调大。默认值已经偏保守，一般不用改。"
+msgstr "Raise these if a slow network or PC often runs into timeouts. The defaults are already generous, so most players never change them."
+
+msgid "{sub}（{low}–{high} {unit}，默认 {default}）"
+msgstr "{sub} ({low}–{high} {unit}, default {default})"
+
+msgid "秒"
+msgstr "s"
+
+msgid "次"
+msgstr "times"
+
+msgid "打开游戏最长等多久"
+msgstr "Longest wait to open the game"
+
+msgid "等游戏视窗出现、等到能截图，各自最多等这么久"
+msgstr "Waiting for the game window and for a first screenshot each take at most this long"
+
+msgid "打开游戏没好，再等几轮"
+msgstr "Extra rounds when the game is not ready"
+
+msgid "等太久时自动再等一轮，游戏开着就不会再开一次"
+msgstr "Waits another round after a timeout; a game that is already open is not opened again"
+
+msgid "登录后等主页最长多久"
+msgstr "Longest wait for Home after login"
+
+msgid "按了 TOUCH TO START 之后，最多等这么久进主页"
+msgstr "After TOUCH TO START is pressed, waits at most this long for Home"
+
+msgid "登录没进主页，重试几次"
+msgstr "Login retries before giving up"
+
+msgid "连续这么多次没进主页，就取消这次一键日常/周常"
+msgstr "After this many misses in a row, this Run All Dailies / Weeklies is cancelled"
+
+msgid "当前账号"
+msgstr "Current account"
+
+msgid "这个时段要跑账号「{name}」，但没能切换过去，这次没有跑。"
+msgstr "This time slot runs account \"{name}\", but switching to it failed, so nothing ran this time."
+
+msgid "这个时段要跑什么"
+msgstr "What this time slot runs"
+
+msgid "{time} 到了只跑勾的任务，今天做完的不会再跑"
+msgstr "At {time} only the ticked tasks run; anything already done today is skipped"
+
+msgid "照账号的勾选跑"
+msgstr "Run what the account has ticked"
+
+msgid "和首页一键日常勾的一样"
+msgstr "The same as ticked for Run All Dailies on Home"
+
+msgid "全不选"
+msgstr "Select none"
+
+msgid "照账号勾选"
+msgstr "Account's ticks"
+
+msgid "自选 {n} 项"
+msgstr "{n} picked"
+
+msgid "时间到先切到这个账号再跑"
+msgstr "When the time comes, switch to this account first, then run"
+
+msgid "游戏里显示执行状态"
+msgstr "Show run status in the game"
+
+msgid "跑的时候在游戏画面上方显示进度，不挡点击、不影响辨识"
+msgstr "Shows progress at the top of the game while running. It never blocks clicks or recognition."
+
+msgid "正在停止"
+msgstr "Stopping"
+
+msgid "跑完"
+msgstr "Finished"
+
+msgid "已停止"
+msgstr "Stopped"
+
+msgid "第 {n} / {total} 项"
+msgstr "Item {n} / {total}"
+
+
+
+
+msgid "完成 {n}"
+msgstr "{n} done"
+
+msgid "跳过 {n}"
+msgstr "{n} skipped"
+
+msgid "失败 {n}"
+msgstr "{n} failed"
+
+msgid "回到工具看结算"
+msgstr "See the summary in the tool"
+
+msgid "{done} / {total} 项"
+msgstr "{done} / {total} items"
+
+msgid "游戏里可以显示执行状态"
+msgstr "Run status can show in the game"
+
+msgid "跑的时候在游戏画面上方显示正在跑什么、跑到第几项，还有暂停、停止按钮。默认关闭，在「设置」里打开。"
+msgstr "While running, the top of the game shows what is running, which item it is on, and Pause/Stop buttons. Off by default; turn it on in Settings."
+
+msgid "打开右边的开关就好。它不挡点击、截图拍不到，不会影响辨识。"
+msgstr "Just turn on the switch on the right. It never blocks clicks and never shows in screenshots, so recognition is not affected."
+
+msgid "第 {n} 关"
+msgstr "Stage {n}"
+
+msgid "按继续改打第 {n} 关"
+msgstr "Resume to play Stage {n} instead"
+
+msgid "已通关"
+msgstr "cleared"
+
+msgid "只在这个时段这样跑，任务本身的设定不变"
+msgstr "Only this time slot runs it this way; the task's own settings stay as they are"
+
+msgid "{n} 项"
+msgstr "{n} tasks"
+
+
+msgid "任务"
+msgstr "Tasks"
+
+msgid "这个时段自己的设定"
+msgstr "Settings for this time slot"
+
+msgid "这个时段自己的设定（已改）"
+msgstr "Settings for this time slot (changed)"
+
+msgid "改回和任务本身一样"
+msgstr "Back to the task's own settings"
+
+msgid "有自己的设定"
+msgstr "own settings"
+
+msgid "时间到自动打开游戏，跑今天还没做的。点空格或右上角 ＋ 新增，点色块修改"
+msgstr "Opens the game on time and runs what is left today. Click an empty hour or ＋ at the top right to add; click a block to change it"
+
+msgid "同一个账号隔 1 小时，不同账号隔半小时"
+msgstr "1 hour apart for one account, 30 minutes between accounts"
+
+msgid "点一下暂停或恢复这个账号的时段；拖到时间上新增一个"
+msgstr "Click to pause or resume this account's times; drag it onto an hour to add one"
+
+msgid "每个账号最多 {n} 个时段"
+msgstr "Up to {n} times per account"
+
+msgid "修改这个时段"
+msgstr "Change this time"
+
+msgid "时间"
+msgstr "Time"
+
+msgid "每周哪几天"
+msgstr "Days of the week"
+
+msgid "{name} 在 {time} 已经有一个时段，同一个账号要隔 1 小时"
+msgstr "{name} already runs at {time}; one account needs 1 hour between times"
+
+msgid "{name} 在 {time} 有一个时段，不同账号要隔半小时"
+msgstr "{name} runs at {time}; two accounts need 30 minutes between them"
+
+msgid "同一个账号的另一个时段隔不到 1 小时，请错开"
+msgstr "Less than 1 hour from another time of the same account; move one"
+
+msgid "和别的账号的时段隔不到半小时，请错开"
+msgstr "Less than 30 minutes from another account's time; move one"

@@ -20,14 +20,17 @@ import numpy as np
 
 from src.tasks.map_trade.vision import normalize_text
 from src.utils.image_utils import relative_roi_frame
+from src.utils.press_confirm import press_and_confirm
 
 REF_W, REF_H = 1920, 1080
 PRICE_LIST_BUTTON_REGION = (1300, 975, 1560, 1040)  # 价目表 (never 一键出售)
 PRICE_LIST_TITLE_REGION = (430, 250, 700, 300)
+PRICE_LIST_OPEN_SECONDS = 4.0  # the list's title after a press
 PRICE_LIST_ROWS_REGION = (660, 350, 1490, 790)
 OWNED_ONLY_CHECKBOX_POINT = (1468, 814)
 OWNED_ONLY_CHECKBOX_BOX = (1452, 800, 1484, 830)
 PRICE_LIST_CLOSE_POINT = (1480, 252)
+PRICE_LIST_CLOSE_SECONDS = 4.0  # the title gone after ✕
 PRICE_LIST_SCROLL_X = 1000
 # One row is 110 px and 4 rows show.  The list keeps gliding after the
 # button is let go: on Leo's 2K PC (2026-10-12) a 300 px drag in 0.5 s moved
@@ -124,8 +127,12 @@ class PriceListMixin:
             )
         return boxes
 
-    def _price_list_open(self) -> bool:
-        boxes = self._ref_boxes(self.vision.capture(), PRICE_LIST_TITLE_REGION, "价目表标题")
+    def _price_list_open(self, frame=None) -> bool:
+        """The list's own title (checked on real pictures in
+        tests/test_page_lookalikes.py: the ✕ and Esc remedies rely on it)."""
+        if frame is None:
+            frame = self.vision.capture()
+        boxes = self._ref_boxes(frame, PRICE_LIST_TITLE_REGION, "价目表标题")
         return any("价目表" in normalize_text(box.name) for box in boxes)
 
     def _wait_price_list(self, open_: bool, timeout: float = 4.0) -> bool:
@@ -151,32 +158,77 @@ class PriceListMixin:
         gold = cv2.inRange(hsv, np.array((15, 90, 140)), np.array((35, 255, 255)))
         return float(np.count_nonzero(gold)) / gold.size >= CHECKBOX_GOLD_MIN_RATIO
 
+    def _price_list_button(self):
+        boxes = self._ref_boxes(self.vision.capture(), PRICE_LIST_BUTTON_REGION, "价目表按钮")
+        return next(
+            (
+                box
+                for box in boxes
+                if "价目表" in normalize_text(box.name)
+                and "出售" not in normalize_text(box.name)
+            ),
+            None,
+        )
+
     def _open_price_list(self) -> bool:
         end_at = monotonic() + PRICE_LIST_READ_SECONDS
         while True:
-            boxes = self._ref_boxes(
-                self.vision.capture(), PRICE_LIST_BUTTON_REGION, "价目表按钮"
-            )
-            button = next(
-                (
-                    box
-                    for box in boxes
-                    if "价目表" in normalize_text(box.name)
-                    and "出售" not in normalize_text(box.name)
-                ),
-                None,
-            )
+            button = self._price_list_button()
             if button is not None or monotonic() >= end_at:
                 break
             self.task.sleep(0.4)
         if button is None:
             return False
-        self.task.operate_click(*self._ref_point(*_center(button)), after_sleep=0.8)
-        return self._wait_price_list(True)
+        point = self._ref_point(*_center(button))
+        # A swallowed press left the shop as it was and the shop search ran
+        # instead (YES-BD2 #60): pressed once more while the button shows (an
+        # opened list whose title went unread covers it).
+        return bool(
+            press_and_confirm(
+                "卖：价目表",
+                lambda: self.task.operate_click(*point, after_sleep=0.8),
+                self._price_list_open,
+                sleep=self.task.sleep,
+                log=self.task.log_info,
+                still_before=lambda: self._price_list_button() is not None,
+                timeout=PRICE_LIST_OPEN_SECONDS,
+            )
+        )
 
     def _close_price_list(self) -> bool:
-        self.task.operate_click(*self._ref_point(*PRICE_LIST_CLOSE_POINT), after_sleep=0.6)
-        return self._wait_price_list(False)
+        """✕, once more while the list still shows, then Esc.
+
+        A dropped ✕ used to leave selling under the list with only 「价目表关闭
+        失败」 logged.  The remedies are steps 3 and 4 of
+        docs/dev-notes/bug-prevention.md, each only while the list's title
+        still reads, so no press lands on the sell page under it.
+        """
+
+        point = self._ref_point(*PRICE_LIST_CLOSE_POINT)
+        if press_and_confirm(
+            "卖：关闭价目表",
+            lambda: self.task.operate_click(*point, after_sleep=0.6),
+            lambda: not self._price_list_open(),
+            sleep=self.task.sleep,
+            log=self.task.log_info,
+            still_before=self._price_list_open,
+            timeout=PRICE_LIST_CLOSE_SECONDS,
+            clock=monotonic,
+        ):
+            return True
+        tap_escape = getattr(self.task, "tap_escape", None)
+        if not callable(tap_escape) or not self._price_list_open():
+            return False
+        # Leo 「關不掉 就按ESC做備案」: Esc closes only the list on top.
+        self.task.log_info("卖：价目表按了两次✕还开着，改按 Esc。")
+        if not (tap_escape(after_sleep=0.6) and self._wait_price_list(False)):
+            return False
+        # Esc must not have left the shop as well: the sell page's own
+        # 价目表 button is under the list.
+        if self._price_list_button() is None:
+            self.task.log_warning("卖：按 Esc 关掉价目表后，出售页的「价目表」按钮也不见了。")
+            return False
+        return True
 
     def _drag_price_list(self, back: bool = False) -> bool:
         """Show later rows, or with ``back`` a little of the rows above."""
@@ -225,6 +277,7 @@ class PriceListMixin:
     def owned_items_at_max_rate(self) -> set[str] | None:
         """Names of bag items at ↑120% today, or None when the list is unreadable."""
 
+        self._price_list_left_open = False
         if not self._open_price_list():
             self.task.log_warning("卖：价目表没有打开，改为逐个商店查找。")
             return None
@@ -279,4 +332,8 @@ class PriceListMixin:
             return found
         finally:
             if not self._close_price_list():
-                self.task.log_warning("卖：价目表关闭失败。")
+                # Selling under the list would press its rows (run_sell stops).
+                self._price_list_left_open = True
+                self.task.log_warning(
+                    "卖：价目表关不掉（按了✕和 Esc），这次先不卖，免得点到价目表上。"
+                )

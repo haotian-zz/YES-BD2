@@ -34,7 +34,9 @@ from src.tasks.map_trade.models import (
 from src.tasks.map_trade.navigator import Navigator
 from src.tasks.map_trade.progress import ProgressStore
 from src.tasks.map_trade.skill_group_keeper import SkillGroupKeeper, stopping
+from src.tasks.map_trade.skill_layout import SkillLayoutWrong
 from src.tasks.map_trade.vision import Vision
+from src.utils.plain_text import DIAGNOSTIC_PREFIX
 from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS, wait_for
 
 # "卡带单步重试次数"未配置时的默认值。
@@ -118,8 +120,13 @@ class Collector(SkillExecutionMixin):
         # card_id -> why a card was skipped (player report 2026-10-17: the
         # summary said only 「这次跳过」 and the stage left over from before).
         self._skip_reasons: dict[str, str] = {}
+        # The skill bar is read once a run (a player may have moved skills).
+        self._skill_layout_checked = False
         try:
             return self._with_skipped_cards(self._run_collection())
+        except SkillLayoutWrong as exc:
+            self.task.log_warning(f"地图采集：{exc}")
+            return CollectionResult(False, message=str(exc))
         except RuntimeError as exc:
             self.task.log_error("地图采集流程异常", exc)
             return CollectionResult(
@@ -328,6 +335,21 @@ class Collector(SkillExecutionMixin):
                     # its hidden items may not have been shown.
                     before_search.append(target.key)
                 if isinstance(searched, SkillExecutionResult):
+                    if not searched.depleted:
+                        # A monster touched the character while 探查 was
+                        # pressed (YES-BD2 #61): run away and do the map
+                        # again, as after the other presses.
+                        left = self._leave_battle(card, role)
+                        if left == "left" and battled_here.get(target.key, 0) < BATTLE_REDOS_MAX:
+                            battled_here[target.key] = battled_here.get(target.key, 0) + 1
+                            continue
+                        if left not in ("left", "none"):
+                            stopped = self._skip_card(
+                                card, f"{role.label}探查时撞到怪进了战斗，{left}", completed_this_run
+                            )
+                            if stopped is not None:
+                                return stopped
+                            break
                     stopped = self._skip_after_skill_failure(
                         card, f"{role.label}探查", searched, completed_this_run
                     )
@@ -494,9 +516,11 @@ class Collector(SkillExecutionMixin):
                     depleted=True,
                     completed_submaps=completed_this_run,
                     message=(
-                        "当前卡带已完成并通过复核；实机技能次数显示已到上限"
+                        # Named: next to a skipped card's reason, 「当前卡带」 read as
+                        # that card being done (player report 2026-10-29, 第16章).
+                        f"{card.label}已完成并通过复核；游戏显示今天的技能次数已用完"
                         if observed_depleted
-                        else "已完成今日7张卡带，达到每日21次吸取上限"
+                        else self._used_up_today()
                     )
                     + (
                         f"；另有{self.progress.pending_count()}条动作次数待后续明亮帧对账"
@@ -521,6 +545,15 @@ class Collector(SkillExecutionMixin):
                 + (f"；末图有{pending}条动作次数待后续明亮帧对账" if pending else "")
             ),
         )
+
+    def _used_up_today(self) -> str:
+        """Which skills the game showed used up today, in player words (it
+        said 「已完成今日7张卡带，达到每日21次吸取上限」 whatever the limit or
+        the cards done were)."""
+        used = [name for name in ("吸收", "召集", "压制") if self.progress.game_used_up(name)]
+        if not used:
+            return "今天的技能次数已用完，剩下的地图明天再跑"
+        return f"今天的{'、'.join(used)}次数游戏已显示用完，剩下的地图明天再跑"
 
     def _card_done_check(self, card, completed) -> CollectionCardSelectionResult:
         """The game's badges for the card (第6章 by its own badge rule)."""
@@ -881,9 +914,9 @@ class Collector(SkillExecutionMixin):
         }
         self._skill_failure_evidence.append(evidence)
         try:
-            self.task.log_warning(
-                f"地图采集：技能识别失败证据（最近{len(self._skill_failure_evidence)}条）"
-                f" {evidence}"
+            self.task.log_info(
+                f"{DIAGNOSTIC_PREFIX}地图采集：技能识别失败证据"
+                f"（最近{len(self._skill_failure_evidence)}条） {evidence}"
             )
         except AttributeError:
             pass

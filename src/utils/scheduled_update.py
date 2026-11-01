@@ -15,6 +15,12 @@ that it runs the version that is there.
 
 Anything that cannot be checked (no launcher in a source checkout, the
 launcher already open, no network) keeps the old way: run now, no update.
+
+The 首页 box 「打开工具时自动开始」 does the same when the tool was not opened by
+the launcher (a player report 2026-10-25: opening the tool went straight to
+一键日常 on the old version).  The launcher updates before it opens the tool,
+so only the other ways in need it.  The copy the launcher opens then runs
+because the box is ticked, not as a scheduled open.
 """
 
 from __future__ import annotations
@@ -33,6 +39,10 @@ RETRY_FLAG = "--scheduled-retry"
 RETRY_MINUTES = 10
 PENDING_MINUTES = 60
 VERSION_TIMEOUT_S = 60
+KIND_SCHEDULE = "schedule"
+KIND_OPEN = "open"
+DAILY_CONFIG = Path("configs") / "DailyBatchTask.json"
+OPEN_BOX_KEY = "打开工具时自动开始"
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 
@@ -139,11 +149,52 @@ def _drop_pending(run=subprocess.run) -> None:
         _log(f"retry task not removed: {exc}")
 
 
-def _age(data: dict, now: datetime) -> timedelta | None:
+def _opened(data: dict) -> datetime | None:
     try:
-        return now - datetime.fromisoformat(data["at"])
+        return datetime.fromisoformat(data["at"])
     except (KeyError, TypeError, ValueError):
         return None
+
+
+def _age(data: dict, now: datetime) -> timedelta | None:
+    opened = _opened(data)
+    return None if opened is None else now - opened
+
+
+def _remember_opened(data: dict) -> None:
+    """The run after the update is the slot that fired then (its 帳號)."""
+    scheduled_start.opened_at = _opened(data)
+
+
+def auto_run_box_on(config=None) -> bool:
+    """The 首页 box 「打开工具时自动开始」, read before ok loads the settings."""
+    try:
+        data = json.loads(Path(config or DAILY_CONFIG).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get(OPEN_BOX_KEY) is True
+
+
+def opened_by_launcher(environ=None) -> bool:
+    """The launcher sets this before it opens the tool, after its own update."""
+    environ = os.environ if environ is None else environ
+    return bool(environ.get("PYAPPIFY_VERSION"))
+
+
+def update_on_open(script_dir, by_launcher: bool, config=None, clone=None, **kwargs) -> bool:
+    """The 首页 box is ticked and the launcher did not open the tool: update first.
+
+    ``by_launcher``: :func:`opened_by_launcher`, read before main.py fills in
+    the launcher's variables.  True when the launcher updates and reopens the
+    tool; then this copy exits.
+    """
+    if by_launcher or not auto_run_box_on(config):
+        return False
+    if clone is None:
+        from src.utils.clone_desktop import in_clone as clone
+    if clone():
+        return False  # the 桌面分身 is given its runs by the open tool
+    return hand_to_launcher(script_dir, kind=KIND_OPEN, **kwargs)
 
 
 def hand_to_launcher(
@@ -153,6 +204,7 @@ def hand_to_launcher(
     run=subprocess.run,
     popen=subprocess.Popen,
     running=launcher_running,
+    kind: str = KIND_SCHEDULE,
 ) -> bool:
     """A scheduled open: True when the launcher updates and reopens the tool.
 
@@ -190,7 +242,7 @@ def hand_to_launcher(
         _log(f"retry task not set ({exc}): run without updating")
         return False
     try:
-        _write_pending({"at": now.isoformat(), "from": current, "to": target})
+        _write_pending({"at": now.isoformat(), "from": current, "to": target, "kind": kind})
         flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
         popen(
             [str(exe), "--auto-start", "true", "--update-method", "auto"],
@@ -207,14 +259,23 @@ def hand_to_launcher(
 
 
 def take_pending(now: datetime | None = None, run=subprocess.run) -> bool:
-    """The launcher reopened the tool after the update: a scheduled open."""
+    """The launcher reopened the tool after the update: a scheduled open.
+
+    After an update from the 首页 box it is an ordinary open (False): the
+    ticked box starts the run.
+    """
     data = _read_pending()
     if data is None:
         return False
     now = now or scheduled_start.local_now()
     age = _age(data, now)
     _drop_pending(run=run)
+    if data.get("kind") == KIND_OPEN:
+        _log(f"opened after the update ({data.get('to')}): the 首页 box starts the run")
+        return False
     fresh = age is not None and timedelta(0) <= age <= timedelta(minutes=PENDING_MINUTES)
+    if fresh:
+        _remember_opened(data)
     _log(f"opened after the update ({data.get('to')}): {'run' if fresh else 'too late, no run'}")
     return fresh
 
@@ -251,5 +312,6 @@ def on_retry(
         except scheduled_start.TaskError as exc:
             _log(f"retry task not set again ({exc}): run now")
     _drop_pending(run=run)
+    _remember_opened(data)
     _log("the launcher did not reopen the tool: run the version that is there")
     return True

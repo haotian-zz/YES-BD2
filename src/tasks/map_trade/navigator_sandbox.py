@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import difflib
 import re
 from dataclasses import replace
 from time import monotonic
 
+import cv2
 import numpy as np
 from ok.task.exceptions import FinishedException, TaskDisabledException
 
@@ -20,6 +22,7 @@ from src.tasks.map_trade.action_icons import (
 )
 from src.tasks.map_trade.collector_constants import SEARCH_COUNTDOWN_RELATIVE_ROI
 from src.tasks.map_trade.models import (
+    COVERED_CIRCLE_ICONS,
     CARD_BY_ID,
     CIRCLE_EXIT_WALKS,
     EVENT_WALK_EDGES,
@@ -51,6 +54,7 @@ from src.tasks.map_trade.navigator_constants import (
     AREA_MAP_CHANGE_TIMEOUT,
     AREA_MAP_CLICK_SETTLE_SECONDS,
     AREA_MAP_EXIT_ICON_OFFSETS,
+    AREA_MAP_KEY,
     AUTO_MOVE_CANCEL_ATTEMPTS,
     AUTO_MOVE_CANCEL_REFERENCE_POINT,
     AUTO_MOVE_IDLE_READS,
@@ -101,8 +105,12 @@ from src.tasks.map_trade.navigator_constants import (
     SANDBOX_MAP_EVIDENCE_MIN_SCORE,
     SANDBOX_MAP_EVIDENCE_MIN_ZNCC,
     SANDBOX_MAP_SETTLE_SECONDS,
+    SANDBOX_MAP_BATTLE_EXIT_MIN_RED,
+    AREA_MAP_LABELS_RELATIVE_ROI,
+    SANDBOX_MAP_LABEL_ICON_REACH,
+    SANDBOX_MAP_TELEPORT_GLYPH_RADIUS,
+    SANDBOX_MAP_TELEPORT_MIN_GLYPH,
     SANDBOX_MAP_TELEPORT_MIN_PIXEL,
-    SANDBOX_MAP_TELEPORT_PIXEL_MARGIN,
     SANDBOX_MAP_TELEPORT_TEMPLATE,
     SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
     SANDBOX_NAVIGATION_MAP_TIMEOUT,
@@ -141,6 +149,9 @@ from src.tasks.map_trade.navigator_constants import (
     TELEPORT_MAP_RETURN_REFERENCE_POINT,
     TELEPORT_MAP_RETURN_RELATIVE_POINT,
     TELEPORT_MAP_SEEK_LIMIT,
+    LOOSE_PAGE_NAME_MIN_RATIO,
+    TELEPORT_MAP_TITLE_REREAD_MIN_RATIO,
+    TELEPORT_MAP_TITLE_REREAD_SCALES,
     TELEPORT_MAP_TELEPORT_CIRCLE_TEMPLATES,
     TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI,
     TELEPORT_LOADING_DARK_P95,
@@ -163,13 +174,15 @@ from src.tasks.map_trade.navigator_constants import (
 from src.tasks.map_trade.vision import normalize_text
 from src.utils.calibration import FHD_1080
 from src.utils.field_followers import dismiss_once_per_run
-from src.utils.press_confirm import press_and_confirm
-from src.utils.wait_limits import STUCK_SECONDS, StillTimer
+from src.utils.press_confirm import press_and_confirm, wait_for
+from src.utils.wait_limits import STUCK_SECONDS, MotionWatch, StillTimer
 
 
 # Field status text after a map click: '自动移动中：魔法阵' (bottom centre) and
 # '已完成自动移动' (top centre); 1920x1080 fractions.
 AUTO_MOVE_TEXT_RELATIVE_ROI = (560 / 1920, 80 / 1080, 1360 / 1920, 980 / 1080)
+# The game's own word that a walk ended.
+WALK_ARRIVED_TEXT = "完成自动移动"
 # The game's 自动移动 dialog after a map destination is picked (player 1080p,
 # YES-BD2 #24): 「是否自动移动前往所选目的地？」 with 取消 / 确认; it does not
 # show once the player ticked 不再显示.
@@ -179,8 +192,18 @@ NOT_BY_CIRCLE_MESSAGE = "人不在可用的传送阵上（右下 F 键的手势�
 # ≡-menu entries also found by a part of the name when one character is
 # misread (「狩猎扬」), on a box no longer than the name.
 NAV_ENTRY_NAMES = {"狩猎场": ("狩猎场", "狩猎", "猎场")}
+# Rows the ≡ menu lists besides the trips asked for (梦幻广场 at 2K
+# 2026-10-17; story towns in the tests): one read means the menu is open.
+NAV_MENU_WORDS = (
+    "旅馆", "招募", "商店", "酒馆", "码头", "领地", "餐厅", "虚拟角色", "脱离当前场景"
+)
+NAV_MENU_ROW_CHARS = 8
+# A ≡ press after which the menu lists nothing is made once more.
+NAV_MENU_PRESSES = 2
 # The game's interact key, as its hand prompt shows it in the field.
 INTERACT_KEY = "F"
+# A press on the area map's circle that opened nothing is made once more.
+TELEPORT_ICON_PRESSES = 2
 # Looks (0.5 s apart) for the large map to close by itself once a walk was
 # confirmed, before it is closed by its back button.
 MAP_SELF_CLOSE_LOOKS = 3
@@ -1231,10 +1254,9 @@ class SandboxNavigationMixin:
     def _sandbox_navigation_page_has_keyword(self, frame: np.ndarray) -> bool:
         return self._detect_map_page_mode(frame).mode == MapPageMode.SANDBOX_LARGE_MAP
 
-    def _sandbox_navigation_teleport(
-        self,
-        frame: np.ndarray,
-    ) -> MatchResult | None:
+    def _round_map_icons(self, frame: np.ndarray) -> list[MatchResult]:
+        """Places on the area map that look like a round icon frame, the most
+        alike first.  The circle, inn, shop and NPC icons share that frame."""
         try:
             candidates = self.vision.match_all(
                 frame,
@@ -1246,8 +1268,8 @@ class SandboxNavigationMixin:
             candidates = ()
         # The masked template scores ~0.90 on any plain stretch of the map
         # (60 passes on 施塔因之塔第6层 at 2K, 2026-09-29) and "exactly one"
-        # never held; the real icon's pixel similarity is 0.94, the rest <=0.62.
-        passed = sorted(
+        # never held; the pixel similarity ranks them, the glyph decides.
+        return sorted(
             (
                 result
                 for result in candidates
@@ -1256,23 +1278,68 @@ class SandboxNavigationMixin:
             key=lambda result: result.pixel_score,
             reverse=True,
         )
+
+    def _sandbox_navigation_teleport(
+        self,
+        frame: np.ndarray,
+    ) -> MatchResult | None:
+        passed = self._round_map_icons(frame)
+        glyphs = [self._teleport_glyph_score(frame, result) for result in passed[:8]]
         best = passed[0].pixel_score if passed else -1.0
         second = passed[1].pixel_score if len(passed) > 1 else -1.0
         self._status(
             "箱庭徒步导航传送阵",
-            f"candidates={len(passed)}, pixel best={best:.3f} second={second:.3f}",
+            f"candidates={len(passed)}, pixel best={best:.3f} second={second:.3f}, "
+            "glyph="
+            + ",".join(f"{glyph:.2f}" for glyph in glyphs[:3]),
         )
         if not passed:
             return None
-        if len(passed) == 1:
-            return passed[0]
-        if best >= SANDBOX_MAP_TELEPORT_MIN_PIXEL and best - second >= SANDBOX_MAP_TELEPORT_PIXEL_MARGIN:
-            return passed[0]
-        if second >= SANDBOX_MAP_TELEPORT_MIN_PIXEL:
-            # Two real circles on one map (角色卡3 上流社会派对会场 at 4K,
-            # 2026-10-04: both 0.957): either one opens the teleport map.
+        # Two real circles on one map (角色卡3 上流社会派对会场 at 4K,
+        # 2026-10-04: both 0.957): either one opens the teleport map.
+        for result, glyph in zip(passed, glyphs):
+            if glyph >= SANDBOX_MAP_TELEPORT_MIN_GLYPH:
+                return result
+        if best >= SANDBOX_MAP_TELEPORT_MIN_PIXEL:
+            self._status("箱庭徒步导航传送阵", "图案被盖住，按边框分数选最高的")
             return passed[0]
         return None
+
+    def _teleport_glyph_score(self, frame: np.ndarray, result: MatchResult) -> float:
+        """How well the glyph inside a candidate's round frame matches the
+        circle's: zero-mean correlation over the inner disc, best of a few
+        pixels' shift (the peak can sit a pixel or two off).  -1 when it
+        cannot be measured."""
+
+        try:
+            template, _mask = self.vision._load(SANDBOX_MAP_TELEPORT_TEMPLATE)
+        except Exception:
+            return -1.0
+        size = template.shape[0]
+        yy, xx = np.mgrid[:size, :size]
+        centre = (size - 1) / 2
+        inner = np.hypot(xx - centre, yy - centre) < size * SANDBOX_MAP_TELEPORT_GLYPH_RADIUS
+        want = template[inner].astype(np.float32)
+        want -= want.mean()
+        gray = frame if frame.ndim == 2 else cv2.cvtColor(frame[..., :3], cv2.COLOR_BGR2GRAY)
+        width, height = result.size
+        x, y = result.position
+        best = -1.0
+        for dy in (-2, -1, 0, 1, 2):
+            for dx in (-2, -1, 0, 1, 2):
+                top, left = y + dy, x + dx
+                if top < 0 or left < 0:
+                    continue
+                crop = gray[top : top + height, left : left + width]
+                if crop.shape[:2] != (height, width):
+                    continue
+                got = cv2.resize(crop, (size, size), interpolation=cv2.INTER_AREA)
+                got = got[inner].astype(np.float32)
+                got -= got.mean()
+                norm = float(np.sqrt((got * got).sum() * (want * want).sum()))
+                if norm > 0:
+                    best = max(best, float((got * want).sum()) / norm)
+        return best
 
     def _walk_text(self, frame: np.ndarray) -> str:
         """The field's walk banner area ("自动移动中" / "已完成自动移动", a
@@ -1353,27 +1420,50 @@ class SandboxNavigationMixin:
 
     def _walk_state(self, frame: np.ndarray) -> str:
         """"caught" when a field patrol stopped the walk, "moving" while
-        "自动移动中" shows, else "idle"."""
-        walking, caught = self._walk_flags(frame)
-        if caught:
+        "自动移动中" shows, "arrived" once the game says 「已完成自动移动」,
+        else "idle"."""
+        text = self._walk_text(frame)
+        if self._walk_caught(text):
             return "caught"
-        return "moving" if walking else "idle"
+        if "移动中" in text:
+            return "moving"
+        return "arrived" if WALK_ARRIVED_TEXT in text else "idle"
 
     def _auto_moving(self, frame: np.ndarray) -> bool:
         """"自动移动中" shows: the game is walking the character somewhere."""
         return self._walk_flags(frame)[0]
 
     def _wait_auto_move_finished(self, timeout: float) -> str:
-        """Wait while "自动移动中" shows: "done" once it is gone, "caught" as
-        soon as a patrol stops the walk, "timeout" when it never ends."""
+        """Wait while "自动移动中" shows: "done" once it is gone, "battle" when
+        a monster met on the way was run from (the walk is to be made again),
+        "timeout" when it never ends.
+
+        Leo 2026-10-27 「被巡邏抓到就繼續 他會走到目的地」「有些被巡邏抓到只是被傳走
+        但他會繼續走 有些會進入戰鬥」: a catch is waited out like
+        _wait_resuming_walk, never stopped."""
         end_at = monotonic() + max(0.0, timeout)
         idle = 0
         still = StillTimer()
+        # An unread banner over a panning field is still the walk (YES-BD2 #62);
+        # one change holds the wait, it presses nothing.
+        motion = MotionWatch(looks=1)
         while monotonic() <= end_at:
             frame = self.vision.capture()
             state = self._walk_state(frame)
             if state == "caught":
-                return state
+                self._status("导航状态", "被巡逻发现，等游戏自己继续走")
+                return self._wait_resuming_walk(RESUMING_WALK_TIMEOUT)
+            if state == "arrived":
+                # The followers and the camera still settle after it (live
+                # 4K 2026-10-27: waited 21 s more on a moving picture).
+                return "done"
+            if state == "idle" and not self._black_frame(frame):
+                # A battle's own animation would read as a moving field.
+                met = self._battle_on_the_way(frame)
+                if met is not None:
+                    return met
+            if state == "idle" and motion.moving(frame):
+                state = "moving"
             if state == "moving" and still.still_for(frame, monotonic()) >= STUCK_SECONDS:
                 # The banner is up but nothing moves: the walk stopped.
                 self._status(
@@ -1390,22 +1480,45 @@ class SandboxNavigationMixin:
             self.task.sleep(0.5)
         return "timeout"
 
-    def _wait_resuming_walk(self, timeout: float) -> None:
+    def _battle_on_the_way(self, frame: np.ndarray) -> str | None:
+        """A field battle met while walking (off the field): "battle" once it
+        was left, "timeout" when it could not be, None when there is none."""
+        if self.classify(frame) == ScreenState.SANDBOX:
+            return None
+        if self._leave_battle_result(frame):
+            return "battle"
+        leave = getattr(self.task, "leave_field_battle", None)
+        if not callable(leave):
+            return None
+        left = leave("跑图路上")
+        if left == "left":
+            return "battle"
+        if left == "none":
+            return None
+        self._status("导航状态", f"路上撞到怪进了战斗，{left}")
+        return "timeout"
+
+    def _wait_resuming_walk(self, timeout: float) -> str:
         """Wait until a walk has ended, patrol catches included: after a catch
         the game reloads the map and walks on by itself (Leo 2026-10-03:
         "放著總會過的"), so nothing is pressed.  Ends once the character
-        stands still with no banner, loading screen or patrol words up."""
+        stands still with no banner, loading screen or patrol words up:
+        "done", or "battle" when a battle was run from on the way and no walk
+        went on after it (the walk is to be made again), "timeout" else."""
 
         end_at = monotonic() + max(0.0, timeout)
         idle = 0
+        fled = False
         still = StillTimer()
+        motion = MotionWatch(looks=1)
         while monotonic() <= end_at:
             frame = self.vision.capture()
+            panning = motion.moving(frame)
             if still.still_for(frame, monotonic()) >= STUCK_SECONDS:
                 self._status(
                     "导航状态", f"画面 {STUCK_SECONDS:.0f} 秒没动，不再等自动移动，继续确认地图"
                 )
-                return
+                return "battle" if fled else "timeout"
             if self._black_frame(frame):
                 idle = 0
                 self._status("导航状态", "加载中，等待自动移动继续")
@@ -1413,25 +1526,33 @@ class SandboxNavigationMixin:
                 walking, caught = self._walk_flags(frame)
                 if walking or caught:
                     idle = 0
+                    # A walk going on after the battle needs no new walk.
+                    fled = fled and not walking
                     if caught:
                         self._status("导航状态", "被巡逻发现，等游戏自己继续走")
+                elif panning:
+                    # The banner unread while the field pans (YES-BD2 #62).
+                    idle = 0
                 elif self.classify(frame) == ScreenState.SANDBOX:
                     idle += 1
                     if idle >= AUTO_MOVE_IDLE_READS:
-                        return
+                        return "battle" if fled else "done"
                 else:
                     # A loading screen with art (not black), a dialog, or
                     # a field battle met on the way (Memory Edge, live 4K
                     # 2026-10-09: VICTORY, 离开, then the walk goes on).
                     idle = 0
-                    if not self._leave_battle_result(frame):
+                    if self._leave_battle_result(frame):
+                        fled = True
+                    else:
                         # A battle still being fought: run away (Leo
                         # 2026-10-22, BaseBD2Task.leave_field_battle).
                         leave = getattr(self.task, "leave_field_battle", None)
-                        if callable(leave):
-                            leave("跑图路上")
+                        if callable(leave) and leave("跑图路上") == "left":
+                            fled = True
             self.task.sleep(0.5)
         self._status("导航状态", f"自动移动{timeout:.0f}秒仍未结束，继续确认地图")
+        return "timeout"
 
     def _leave_battle_result(self, frame: np.ndarray) -> bool:
         """Press 离开 when a field battle's result shows; True when pressed."""
@@ -1473,37 +1594,29 @@ class SandboxNavigationMixin:
             stopped = True
         return stopped
 
-    def _stop_caught_walk(self) -> None:
-        """After a patrol catch the map reloads at its entrance and the game
-        walks on toward the same spot, to be caught again (ch14 live, twice
-        within 3 s): stop that walk the moment its banner shows, then wait
-        until the character stands in the field with no patrol words up."""
-
-        end_at = monotonic() + self._loading_timeout()
-        calm = 0
-        while monotonic() <= end_at:
-            frame = self.vision.capture()
-            walking, caught = self._walk_flags(frame)
-            if walking:
-                self._cancel_walk()
-                calm = 0
-                continue
-            if not caught and self.classify(frame) == ScreenState.SANDBOX:
-                calm += 1
-                if calm >= AUTO_MOVE_IDLE_READS:
-                    return
-            else:
-                calm = 0
-            self.task.sleep(0.5)
-
     def _click_sandbox_navigation_menu_teleport(self, frame: np.ndarray) -> bool:
         """Select a stacked navigation-map teleport submenu by OCR center."""
 
+        center = self._sandbox_navigation_menu_teleport_option(frame)
+        if center is None:
+            return False
+        self.vision.click_client(
+            center,
+            frame.shape,
+            after_sleep=SANDBOX_NAVIGATION_OCR_INTERVAL,
+        )
+        self._status("箱庭徒步导航传送阵菜单", f"点击魔法阵中心={center}")
+        return True
+
+    def _sandbox_navigation_menu_teleport_option(
+        self, frame: np.ndarray
+    ) -> tuple[int, int] | None:
+        """The centre of the stacked menu's 魔法阵 row, or None."""
         try:
             boxes = self.vision.ocr_boxes(frame, "箱庭徒步导航传送阵菜单")
         except Exception as exc:
             self._status("箱庭徒步导航传送阵菜单 OCR错误", str(exc))
-            return False
+            return None
         for box in boxes:
             label = normalize_text(
                 self.vision.simplify(str(getattr(box, "name", "")))
@@ -1513,16 +1626,9 @@ class SandboxNavigationMixin:
             if "魔法阵" not in label or "自动移动" in label:
                 continue
             center = self._ocr_box_center(box)
-            if center is None:
-                continue
-            self.vision.click_client(
-                center,
-                frame.shape,
-                after_sleep=SANDBOX_NAVIGATION_OCR_INTERVAL,
-            )
-            self._status("箱庭徒步导航传送阵菜单", f"点击魔法阵中心={center}")
-            return True
-        return False
+            if center is not None:
+                return center
+        return None
 
     def _click_sandbox_navigation_destination_confirmation(
         self,
@@ -1605,8 +1711,10 @@ class SandboxNavigationMixin:
             return label, center
         return None
 
-    def _walk_to_sandbox_teleport_interaction(self) -> NavigationResult:
-        """Use the sandbox navigation map to walk back to a portal interaction prompt."""
+    def _walk_to_sandbox_teleport_interaction(self, redo: bool = True) -> NavigationResult:
+        """Use the sandbox navigation map to walk back to a portal interaction
+        prompt; a battle met on the way is run from and the walk made once
+        more (``redo``)."""
 
         self._status("导航状态", "改用导航/徒步前往传送阵")
         # The minimap itself opens the area map (as M does).  The icon
@@ -1632,64 +1740,52 @@ class SandboxNavigationMixin:
                 teleport_frame = frame
                 break
             self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
+        destination_confirmed = caught_early = False
         if teleport is None:
-            # Why, in the player's words (Leo 2026-10-24 「錯誤要寫原因 不要寫讀不到」).
-            why = (
-                "区域地图上找不到传送阵图标（这张地图可能没有已开启的传送阵，或被角色图标盖住）"
-                if ever_confirmed
-                else "点小地图后没看到区域地图（地图没打开，或标题和底栏都没对上）"
-            )
-            self._close_confirmed_map_page(
-                {MapPageMode.SANDBOX_LARGE_MAP},
-                timeout=SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
-            )
-            self._close_field_map_if_open()
-            return NavigationResult(
-                False,
-                ScreenState.SANDBOX_MAP,
-                why,
-                map_page_mode=MapPageMode.SANDBOX_LARGE_MAP,
-            )
-
-        self.vision.click_client(
-            teleport.center,
-            teleport_frame.shape,
-            after_sleep=SANDBOX_NAVIGATION_TELEPORT_SETTLE_SECONDS,
-        )
-        menu_end_at = monotonic() + SANDBOX_NAVIGATION_CONFIRM_TIMEOUT
-        destination_confirmed = False
-        while monotonic() <= menu_end_at:
-            menu_frame = self.vision.capture()
-            walk_text = self._walk_text(menu_frame)
-            if self._walk_caught(walk_text):
-                # Caught before the banner was ever read (live 2K: "被发现了！！"
-                # 3 s after the click).
-                self._stop_caught_walk()
+            # The circle drawn under another icon (第16章 迪尔索特港口城市: the
+            # inn's icon covers it, player report 2026-10-29): pressing that
+            # icon lists 「魔法阵 / 旅馆」.
+            under = self._circle_under_other_icon(frame) if ever_confirmed else None
+            if under is None:
+                # Why, in the player's words (Leo 2026-10-24 「錯誤要寫原因 不要寫讀不到」).
+                why = (
+                    "区域地图上找不到传送阵图标（这张地图可能没有已开启的传送阵，"
+                    "或被别的图示盖住）"
+                    if ever_confirmed
+                    else "点小地图后没看到区域地图（地图没打开，或标题和底栏都没对上）"
+                )
+                self._close_confirmed_map_page(
+                    {MapPageMode.SANDBOX_LARGE_MAP},
+                    timeout=SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
+                )
+                self._close_field_map_if_open()
                 return NavigationResult(
                     False,
-                    ScreenState.SANDBOX,
-                    "走向传送阵时被巡逻发现并驱逐，已停止自动移动",
+                    ScreenState.SANDBOX_MAP,
+                    why,
+                    map_page_mode=MapPageMode.SANDBOX_LARGE_MAP,
                 )
-            if self._auto_move_question_shown(walk_text):
-                # 「是否自动移动前往所选目的地？」 (YES-BD2 #24): its title
-                # 自动移动 is not the walk banner; its 确认 starts the walk.
-                if self._click_sandbox_navigation_destination_confirmation(menu_frame):
-                    destination_confirmed = True
-                    break
-                self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
-                continue
-            if "自动移动" in walk_text:
-                # One click on the map icon already started the walk: no
-                # menu and no confirm button follow.
-                destination_confirmed = True
+            destination_confirmed, caught_early = under
+        for press in range(1, TELEPORT_ICON_PRESSES + 1):
+            if teleport is None:
                 break
-            if self._click_sandbox_navigation_menu_teleport(menu_frame):
-                self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
-                continue
-            if self._click_sandbox_navigation_destination_confirmation(menu_frame):
-                destination_confirmed = True
+            self.vision.click_client(
+                teleport.center,
+                teleport_frame.shape,
+                after_sleep=SANDBOX_NAVIGATION_TELEPORT_SETTLE_SECONDS,
+            )
+            destination_confirmed, caught_early = self._follow_teleport_icon_press()
+            if destination_confirmed or press == TELEPORT_ICON_PRESSES:
                 break
-            self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
+            # Nothing the press opens showed (remedy 3,
+            # docs/dev-notes/bug-prevention.md): the circle once more, only
+            # while the map still shows it and nothing else.
+            teleport_frame = self.vision.capture()
+            teleport = self._circle_press_left_nothing(teleport_frame)
+            if teleport is None:
+                break
+            self._status("导航状态", "点了区域地图上的传送阵没反应，再点一次")
+            self.task.log_info("跑图：点了区域地图上的传送阵没反应，再点一次。")
         if not destination_confirmed:
             frame = self.vision.capture()
             if self._sandbox_navigation_page_has_keyword(frame):
@@ -1712,17 +1808,25 @@ class SandboxNavigationMixin:
         # The hand prompt shows while the walk is still finishing; pressing
         # it then keeps the walk alive across the teleport and drags the
         # character back through the floors (live 2K 2026-09-29).
-        if self._wait_auto_move_finished(SANDBOX_NAVIGATION_WALK_TIMEOUT) == "caught":
-            # From ch14 左侧回廊's 中央回廊 side every try is caught (Leo:
-            # 萬一被抓要應對，避免卡死): stop the walk and let the caller go
-            # by 狩猎场 or 艾琳 instead of waiting for a prompt that never shows.
-            self._stop_caught_walk()
+        walked = (
+            self._wait_resuming_walk(RESUMING_WALK_TIMEOUT)
+            if caught_early
+            else self._wait_auto_move_finished(SANDBOX_NAVIGATION_WALK_TIMEOUT)
+        )
+        if walked == "battle":
+            if redo:
+                self._status("导航状态", "走向传送阵时撞到怪，逃跑后重新走一次")
+                return self._walk_to_sandbox_teleport_interaction(redo=False)
             return NavigationResult(
                 False,
                 ScreenState.SANDBOX,
-                "走向传送阵时被巡逻发现并驱逐，已停止自动移动",
+                "走向传送阵时两次撞到怪进了战斗，都已逃跑，没走到传送阵",
             )
         if not self._click_sandbox_teleport_interaction(timeout=self._loading_timeout()):
+            if walked == "done" and self._press_interact_key_on_circle():
+                # The walk ended on the circle: its hand may just not read
+                # (player 1080p 125% 2026-10-17 at the hunting ground's).
+                return self._open_circle_page(f"走到传送阵后快捷键{INTERACT_KEY}")
             # A walk still going (resumed after an unseen catch) would fight
             # the caller's next step (the ≡ menu).
             self._cancel_walk()
@@ -1732,6 +1836,219 @@ class SandboxNavigationMixin:
                 "徒步回退后仍未识别到传送阵交互按钮",
             )
         return self._open_circle_page("徒步回退交互")
+
+    def _follow_teleport_icon_press(self) -> tuple[bool, bool]:
+        """After the circle on the area map was pressed: its 魔法阵 menu, its
+        确认, or the 自动移动 question, until the walk is confirmed.
+        (confirmed, caught before the banner was read)."""
+        menu_end_at = monotonic() + SANDBOX_NAVIGATION_CONFIRM_TIMEOUT
+        while monotonic() <= menu_end_at:
+            menu_frame = self.vision.capture()
+            walk_text = self._walk_text(menu_frame)
+            if self._walk_caught(walk_text):
+                # Caught before the banner was ever read (live 2K: "被发现了！！"
+                # 3 s after the click): the walk itself was under way.
+                return True, True
+            if self._auto_move_question_shown(walk_text):
+                # 「是否自动移动前往所选目的地？」 (YES-BD2 #24): its title
+                # 自动移动 is not the walk banner; its 确认 starts the walk.
+                if self._click_sandbox_navigation_destination_confirmation(menu_frame):
+                    return True, False
+                self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
+                continue
+            if "自动移动" in walk_text:
+                # One click on the map icon already started the walk: no
+                # menu and no confirm button follow.
+                return True, False
+            if self._click_sandbox_navigation_menu_teleport(menu_frame):
+                self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
+                continue
+            if self._click_sandbox_navigation_destination_confirmation(menu_frame):
+                return True, False
+            self.task.sleep(SANDBOX_NAVIGATION_OCR_INTERVAL)
+        return False, False
+
+    def _circle_under_other_icon(self, frame: np.ndarray) -> tuple[bool, bool] | None:
+        """On a map whose circle the game draws under another icon
+        (COVERED_CIRCLE_ICONS), press that icon, found by its label: a menu
+        listing 「魔法阵」 is followed as a circle press, and a walk that
+        starts at once (the character is near: Leo 2026-10-30 「距離近的時候
+        他就是會用走的」) is kept while its banner names 魔法阵 or that icon.
+        Any other walk is stopped at once.  No other icon is ever pressed
+        (Leo 「你有可能會點到戰鬥區域」).  None when nothing came of it.
+
+        第16章 迪尔索特港口城市: the inn hides the circle; its frame scored
+        0.839 and glyph 0.30 (Leo's 2K frame 2026-10-30), and pressing the
+        inn lists 「魔法阵 / 旅馆」 (Leo: 「點擊後可以選擇」)."""
+        header = self._area_map_title(frame)
+        label = next(
+            (cover for title, cover in COVERED_CIRCLE_ICONS.items() if title in header),
+            None,
+        )
+        if label is None:
+            return None
+        icon = self._icon_under_label(frame, label)
+        if icon is None:
+            self._status("导航状态", f"地图上没读到「{label}」，不点别的图示")
+            return None
+        self._status("导航状态", f"传送阵被「{label}」盖住，点它的图示")
+        self.task.log_info(f"跑图：区域地图上的传送阵被「{label}」的图示盖住，点那个图示。")
+        self.vision.click_client(
+            icon.center,
+            frame.shape,
+            after_sleep=SANDBOX_NAVIGATION_OCR_INTERVAL,
+        )
+        outcome = wait_for(
+            lambda: self._icon_press_outcome(label),
+            SANDBOX_NAVIGATION_CONFIRM_TIMEOUT,
+            sleep=self.task.sleep,
+            poll=SANDBOX_NAVIGATION_OCR_INTERVAL,
+        )
+        if outcome == "menu":
+            return self._follow_teleport_icon_press()
+        if outcome == "walk":
+            return True, False
+        self._undo_map_icon_press()
+        return None
+
+    def _area_map_title(self, frame: np.ndarray) -> str:
+        """The area map's title in ``frame``, normalized; "" when unread."""
+        try:
+            text = self.vision.ocr_text(
+                frame, "区域地图标题", relative_roi=TELEPORT_MAP_HEADER_OCR_RELATIVE_ROI
+            )
+        except (TaskDisabledException, FinishedException):
+            raise
+        except Exception:
+            return ""
+        return normalize_text(self.vision.simplify(str(text)))
+
+    def _icon_under_label(self, frame: np.ndarray, label: str) -> MatchResult | None:
+        """The round icon nearest the map label ``label`` (read by OCR), within
+        an icon's width of it; None when the label or an icon is not seen."""
+        centre = None
+        for scale in (1.0, 2.0):
+            # Small words: read again at 2× (the remedy ladder's first step).
+            try:
+                boxes = self.vision.ocr_boxes(
+                    frame,
+                    "区域地图图示名",
+                    relative_roi=AREA_MAP_LABELS_RELATIVE_ROI,
+                    ocr_scale=scale,
+                )
+            except (TaskDisabledException, FinishedException):
+                raise
+            except Exception:
+                return None
+            centre = next(
+                (
+                    self._ocr_box_center(box)
+                    for box in boxes
+                    if self._reads_as_label(
+                        normalize_text(self.vision.simplify(str(getattr(box, "name", "")))), label
+                    )
+                ),
+                None,
+            )
+            if centre is not None:
+                break
+        if centre is None:
+            return None
+        reach = frame.shape[0] * SANDBOX_MAP_LABEL_ICON_REACH
+        icons = [
+            icon
+            for icon in self._round_map_icons(frame)
+            if not self._battle_exit_icon(frame, icon)
+            and abs(icon.center[0] - centre[0]) <= reach
+            and abs(icon.center[1] - centre[1]) <= reach
+        ]
+        return min(
+            icons,
+            key=lambda icon: (icon.center[0] - centre[0]) ** 2 + (icon.center[1] - centre[1]) ** 2,
+            default=None,
+        )
+
+    def _icon_press_outcome(self, label: str) -> str | None:
+        """After pressing the icon over the circle: "menu" when a menu lists
+        魔法阵, "walk" when a walk began toward 魔法阵 or that icon (or its
+        banner names no place), "other" at once for a walk anywhere else or
+        the 自动移动 question, None while nothing showed yet."""
+        frame = self.vision.capture()
+        if self._sandbox_navigation_menu_teleport_option(frame) is not None:
+            return "menu"
+        walk_text = self._walk_text(frame)
+        if self._auto_move_question_shown(walk_text):
+            return "other"
+        if "移动中" not in walk_text:
+            # 「已中止自动移动」 and the like are no walk.
+            return None
+        place = walk_text.split("移动中", 1)[1].lstrip(":：")
+        if not place or "魔法阵" in place or place in label or label in place:
+            return "walk"
+        self._status("导航状态", f"点图示后走向「{place}」，不是传送阵，马上停下")
+        return "other"
+
+    @staticmethod
+    def _reads_as_label(text: str, label: str) -> bool:
+        """``text`` is ``label`` read whole, or with at most its first or last
+        character cut off (「迪尔索特旅」 at 1080p); 「迪尔索特」 alone, shared
+        by every label on that map, is not."""
+        if not text:
+            return False
+        if label in text:
+            return True
+        return len(text) >= len(label) - 1 and text in label
+
+    @staticmethod
+    def _battle_exit_icon(frame: np.ndarray, icon: MatchResult) -> bool:
+        """The icon holds red crossed swords: a battle area's exit.  Its
+        box is ~25 % strong red (迪尔索特黑市, 加尔顿山后段), the inn,
+        tavern, NPC and circle icons 0 % (2026-10-30 frames)."""
+        x, y = icon.position
+        width, height = icon.size
+        crop = frame[max(0, y) : y + height, max(0, x) : x + width]
+        if crop.size == 0 or crop.ndim != 3:
+            return False
+        hsv = cv2.cvtColor(crop[..., :3], cv2.COLOR_BGR2HSV)
+        red = ((hsv[..., 0] < 10) | (hsv[..., 0] > 170)) & (hsv[..., 1] > 120) & (hsv[..., 2] > 90)
+        return float(red.mean()) >= SANDBOX_MAP_BATTLE_EXIT_MIN_RED
+
+    def _undo_map_icon_press(self) -> np.ndarray | None:
+        """After pressing an icon that was not the circle: cancel the
+        自动移动 question or a walk it started, then close the area map and
+        open it again (closes any icon menu too).  The reopened map's frame,
+        or None when it did not open."""
+        self._cancel_auto_move_dialog()
+        self._cancel_walk()
+        self._close_field_map_if_open()
+        if self._open_field_map() is None:
+            return None
+        frame = self.vision.capture()
+        return frame if self._sandbox_navigation_page_has_keyword(frame) else None
+
+    def _circle_press_left_nothing(self, frame: np.ndarray) -> MatchResult | None:
+        """The circle to press again: the area map still shows it, and none of
+        what its press opens (the 魔法阵 menu, 确认, the 自动移动 question).
+        None once anything else shows; a press could land on it."""
+        if not self._sandbox_navigation_page_has_keyword(frame):
+            return None
+        if self._sandbox_navigation_destination_button(frame) is not None:
+            return None
+        if self._auto_move_question_shown(self._walk_text(frame)):
+            return None
+        if self._sandbox_navigation_menu_teleport_option(frame) is not None:
+            return None
+        return self._sandbox_navigation_teleport(frame)
+
+    def _press_interact_key_on_circle(self) -> bool:
+        """The game's interact key F, sent only on a confirmed field (on 主页
+        it opens the recent cartridge).  True when it was sent."""
+        tap_key = getattr(self.task, "tap_key", None)
+        if not callable(tap_key) or not self._field_keycaps_shown():
+            return False
+        self._status("导航状态", f"走到传送阵后没认出交互手势，改按快捷键 {INTERACT_KEY}")
+        self.task.log_info(f"跑图：走到传送阵后没认出交互手势，改按快捷键 {INTERACT_KEY}。")
+        return bool(tap_key(INTERACT_KEY, after_sleep=TELEPORT_INTERACTION_CLICK_DELAY))
 
     def open_teleport_map_from_sandbox(self) -> NavigationResult:
         """Open the teleport map through the circle's 交互 button."""
@@ -2186,6 +2503,77 @@ class SandboxNavigationMixin:
         longest = max(length for length, _key in matches)
         return tuple(sorted({key for length, key in matches if length == longest}))
 
+    def _centered_title_keys(
+        self, frame: np.ndarray, card: CardSpec, keys: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        """The page whose name sits in the middle of the label bar, when the
+        title read named several maps.
+
+        Player v0.2.25 2560x1440 fullscreen 150% (2026-10-31): 第7章 back to
+        the town failed with 「左右翻页都未找到拉勒凯镇：last=… 拉勒凯镇」 while
+        page 1 (安全 拉勒凯镇) was on screen for 9 s.  Every page read that
+        names 拉勒凯镇 alone is taken, so that read also named 洞穴神殿 or
+        隐藏神殿 (same length, a tie -> no page at all).  The bar shows one
+        centred label; another map's name (the next label sliding by, a map
+        label) lies off the middle.  Per OCR box, the box nearest the bar's
+        centre that names one map decides; inside one box, the name read last
+        (the label is 「战斗Ⅰ 洞穴神殿」/「安全 拉勒凯镇」: tag, then name).
+        """
+        ocr_boxes = getattr(self.vision, "ocr_boxes", None)
+        if ocr_boxes is None:
+            return keys
+        try:
+            boxes = list(
+                ocr_boxes(frame, "传送阵地图名分框", relative_roi=TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI)
+                or []
+            )
+        except (TaskDisabledException, FinishedException):
+            raise
+        except Exception as exc:  # the joined read still stands
+            self._status("区域地图", f"传送阵地图名分框读取失败：{exc}")
+            return keys
+        width = frame.shape[1]
+        middle = width * (
+            TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI[0] + TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI[2]
+        ) / 2
+        named: list[tuple[float, str, str]] = []
+        for box in boxes:
+            text = normalize_text(self.vision.simplify(str(getattr(box, "name", "") or "")))
+            box_keys = self._target_keys_in_text(card, text) if text else ()
+            if not box_keys:
+                continue
+            if len(box_keys) > 1:
+                box_keys = (self._last_named_key(card, text, box_keys),)
+            x = getattr(box, "x", None)
+            box_width = getattr(box, "width", None)
+            distance = (
+                abs(float(x) + float(box_width) / 2 - middle)
+                if x is not None and box_width is not None
+                else float("inf")
+            )
+            named.append((distance, box_keys[0], text))
+        if not named:
+            return keys
+        _distance, key, text = min(named, key=lambda item: item[0])
+        self._status(
+            "区域地图",
+            f"传送阵地图名读到多个地图（{','.join(keys)}），取中间的「{text}」-> {key}",
+        )
+        return (key,)
+
+    @staticmethod
+    def _last_named_key(card: CardSpec, text: str, keys: tuple[str, ...]) -> str:
+        """Of ``keys`` all named in ``text``, the one whose name ends last."""
+        ends: list[tuple[int, str]] = []
+        for target in card.targets:
+            if target.key not in keys:
+                continue
+            for title in target.titles:
+                name = normalize_text(title)
+                if name and name in text:
+                    ends.append((text.rindex(name) + len(name), target.key))
+        return max(ends)[1] if ends else keys[0]
+
     def _area_map_context(self, frame: np.ndarray, card: CardSpec) -> AreaMapContext:
         detection = self._detect_map_page_mode(frame)
         if not detection.mode.is_teleport_map:
@@ -2217,6 +2605,31 @@ class SandboxNavigationMixin:
         )
         normalized_text = normalize_text(raw_text)
         target_keys = self._target_keys_in_text(card, normalized_text)
+        if len(target_keys) > 1:
+            target_keys = self._centered_title_keys(frame, card, target_keys)
+        if len(target_keys) != 1 and self._title_worth_rereading(card, normalized_text):
+            # Read again bordered and enlarged before the page counts as
+            # another map (Leo 2026-10-31 「還有沒有辦法不會再出錯」).
+            for scale in TELEPORT_MAP_TITLE_REREAD_SCALES:
+                again = self.vision.simplify(
+                    self.vision.ocr_text(
+                        frame,
+                        "传送阵地图名放大重读",
+                        relative_roi=TELEPORT_MAP_TITLE_OCR_RELATIVE_ROI,
+                        ocr_scale=scale,
+                        bordered=True,
+                    )
+                )
+                again_keys = self._target_keys_in_text(card, normalize_text(again))
+                if len(again_keys) == 1:
+                    self._status(
+                        "区域地图",
+                        f"传送阵地图名「{raw_text or '-'}」放大{scale:g}倍重读为「{again}」",
+                    )
+                    raw_text, normalized_text, target_keys = (
+                        again, normalize_text(again), again_keys
+                    )
+                    break
         context = AreaMapContext(
             frame_shape=frame.shape,
             raw_text=raw_text,
@@ -2298,8 +2711,8 @@ class SandboxNavigationMixin:
         taken from the known page order, else both sides are tried.
         """
 
-        if context.resolved_target_key == target.key:
-            return context
+        if (found := self._page_is(card, context, target)) is not None:
+            return found
         # Page order, not collection order: Q_ep2's safe zone is the last
         # page, so its battle maps are to the left (Leo 2026-10-15).
         keys = list(self._collection_page_order(card))
@@ -2314,6 +2727,13 @@ class SandboxNavigationMixin:
         else:
             directions = ("right", "left")
         start = context
+        seen: list[str] = []
+
+        def note(page: AreaMapContext) -> None:
+            if page.raw_text and page.raw_text not in seen:
+                seen.append(page.raw_text)
+
+        note(context)
         for direction in directions:
             current = start
             for _ in range(TELEPORT_MAP_SEEK_LIMIT):
@@ -2321,8 +2741,9 @@ class SandboxNavigationMixin:
                 if changed is None:
                     break  # no arrow or no change: this end of the list
                 current = changed
-                if current.resolved_target_key == target.key:
-                    return current
+                note(current)
+                if (found := self._page_is(card, current, target)) is not None:
+                    return found
             start = current
         # Last resort (Leo: every read needs a fallback): an arrow misread
         # as missing ended the first side unpressed (2K 桌面分身 2026-10-16,
@@ -2334,14 +2755,89 @@ class SandboxNavigationMixin:
             if changed is None:
                 break
             current = changed
-            if current.resolved_target_key == target.key:
-                return current
+            note(current)
+            if (found := self._page_is(card, current, target)) is not None:
+                return found
         start = current
         return NavigationResult(
             False,
             ScreenState.AREA_MAP,
-            f"传送阵地图左右翻页都未找到{target.title}：last={start.raw_text or '-'}",
+            # The page read in words, not 「last=…」: the 问题摘要 drops
+            # key=value text, so the player's summary showed 「： 拉勒凯镇」 and
+            # hid what was really read (2026-10-31).
+            (
+                f"传送阵地图左右翻页都未找到{target.title}（各页读到："
+                + ("、".join(f"「{text}」" for text in seen) or "没读到字")
+                + "）"
+            ),
         )
+
+    def _page_is(
+        self, card: CardSpec, page: AreaMapContext, target: CollectionMapTarget
+    ) -> AreaMapContext | None:
+        """``page`` when it is ``target``'s page, else None.
+
+        The name under the map decides.  A read of it that came out a little
+        wrong still counts (Leo 2026-10-31 「字接近就判定成功」): the player's
+        第7章 sat 9 s on page 1 「安全 拉勒凯镇」 and every read there missed
+        the clean name, so the card was skipped.  A loose match must be close
+        to this name and closer to it than to any other map of the card, so
+        「安全 拉勒凯旅馆」 (the town's inn, same first three characters) is
+        never the town.  The map after the teleport still checks.
+        """
+        if page.resolved_target_key == target.key:
+            return page
+        if not page.is_area_map or not page.normalized_text:
+            return None
+        if page.resolved_target_key is not None:
+            return None  # the read names another map alone
+        score = self._name_closeness(page.normalized_text, target)
+        if score < LOOSE_PAGE_NAME_MIN_RATIO:
+            return None
+        if any(
+            self._name_closeness(page.normalized_text, other) >= score
+            for other in card.targets
+            if other.key != target.key
+        ):
+            return None
+        self._status(
+            "区域地图",
+            f"传送阵地图名「{page.raw_text}」接近{target.title}（{score:.2f}），当作这一页",
+        )
+        return replace(
+            page,
+            candidate_target_keys=(target.key,),
+            resolved_target_key=target.key,
+            guessed=True,
+        )
+
+    def _title_worth_rereading(self, card: CardSpec, text: str) -> bool:
+        """An unresolved page read that may be one of the card's maps misread:
+        nothing read, or something sharing a character run with a map name.
+        A clean read of a page that is none of them (狩猎场, 旅馆) is left as
+        it is, so the seek stays quick."""
+        if not text:
+            return True
+        return any(
+            self._name_closeness(text, target) >= TELEPORT_MAP_TITLE_REREAD_MIN_RATIO
+            for target in card.targets
+        )
+
+    @staticmethod
+    def _name_closeness(text: str, target: CollectionMapTarget) -> float:
+        """How close the page read is to ``target``'s name, 0..1: the read
+        without its 安全/战斗 tag, compared character by character; a read
+        holding the whole name next to another map's name counts as 1."""
+        bare = re.sub(r"^(安全|战斗)?[ⅠⅡⅢⅣⅤⅥⅦⅰⅱⅲiIＩ1-7]*", "", text)
+        best = 0.0
+        for title in target.titles:
+            name = normalize_text(title)
+            if not name:
+                continue
+            if name in text:
+                return 1.0
+            best = max(best, difflib.SequenceMatcher(None, name, bare).ratio())
+        return best
 
     @staticmethod
     def _collection_page_order(card: CardSpec) -> tuple[str, ...]:
@@ -2456,7 +2952,7 @@ class SandboxNavigationMixin:
                 arrived.state,
                 f"传送到{target.title}后未确认剧情箱庭：{arrived.message}",
             )
-        if getattr(self, "_teleport_loading_seen", False):
+        if getattr(self, "_teleport_loading_seen", False) and not context.guessed:
             # The page was this target by name and the teleport's loading
             # screen came: no area-map check after it (Leo 2026-10-01, ~2 s
             # a move).  Without the loading seen, the area map still decides.
@@ -2624,15 +3120,29 @@ class SandboxNavigationMixin:
             self._nav_failure = f"没按到小地图的≡按钮：{why}"
             self.task.log_warning(f"跑图：未识别到小地图导航按钮，无法前往{wanted}。")
             return None
-        choice = self._nav_menu_choice(entries)
-        if choice is None and HUNTING_GROUND_NAV_ENTRY in entries and self._hunting_ground_panel(
-            getattr(self, "_nav_menu_texts", ())
-        ):
-            # The bar showed up only after the press (read too early above).
-            self._status("导航状态", "读到狩猎场的栏，人已在狩猎场，直接去按传送阵")
-            self.task.log_info("跑图：人已经在狩猎场，直接去按传送阵。")
-            self._already_in_hunting_ground = True
-            return HUNTING_GROUND_NAV_ENTRY
+        for press in range(1, NAV_MENU_PRESSES + 1):
+            choice = self._nav_menu_choice(entries)
+            texts = getattr(self, "_nav_menu_texts", ())
+            if choice is None and HUNTING_GROUND_NAV_ENTRY in entries and (
+                self._hunting_ground_panel(texts)
+            ):
+                # The bar showed up only after the press (read too early above).
+                self._status("导航状态", "读到狩猎场的栏，人已在狩猎场，直接去按传送阵")
+                self.task.log_info("跑图：人已经在狩猎场，直接去按传送阵。")
+                self._already_in_hunting_ground = True
+                return HUNTING_GROUND_NAV_ENTRY
+            on_map = self._area_map_title_in(getattr(self, "_nav_menu_frame", None))
+            if choice is not None or press == NAV_MENU_PRESSES or (
+                self._nav_menu_listed(texts) and not on_map
+            ):
+                break
+            # Nothing the menu lists was read: the ≡ press may not have taken
+            # (remedy 3, docs/dev-notes/bug-prevention.md).  On a menu that was
+            # open after all, the press closes it and the read below says so.
+            self._status("导航状态", "按了≡按钮没看到菜单，再按一次")
+            self.task.log_info("跑图：按了≡按钮没看到菜单，再按一次。")
+            if not self._open_minimap_nav_menu():
+                break
         if choice is None:
             seen = getattr(self, "_nav_menu_seen", "")
             self._nav_failure = f"≡菜单里没读到{wanted}" + (f"，读到：{seen}" if seen else "，什么字都没读到")
@@ -2694,11 +3204,43 @@ class SandboxNavigationMixin:
                 entry = next(item for item in entries if item in listed)
                 return entry, listed[entry], frame.shape
             if timed_out:
+                self._nav_menu_frame = frame
                 self._nav_menu_texts = tuple(texts)
                 self._nav_menu_seen = " ".join(texts)[:40]
                 return None
             seen = bool(listed)
             self.task.sleep(MERCHANT_NAV_MENU_OCR_INTERVAL)
+
+    @staticmethod
+    def _nav_menu_listed(texts) -> bool:
+        """The texts read where the ≡ menu opens hold a row it lists.  A row
+        is short: the 珍藏集 page's 「可体验广场钓鱼领地等…」 is not 领地."""
+        return any(
+            len(text) <= NAV_MENU_ROW_CHARS and word in text
+            for text in texts
+            for word in NAV_MENU_WORDS
+        )
+
+    def _nav_menu_shown(self, frame) -> bool:
+        """The ≡ menu is open: a row it lists reads, and no area map is up.
+        The area map's place labels 「迪尔索特旅馆」「…酒馆」 sit where the menu
+        opens and carry its words (Leo's 2K frame of 第16章 2026-10-30)."""
+        return self._nav_menu_listed(self._nav_menu_entries(frame, ())[1]) and not (
+            self._area_map_title_in(frame)
+        )
+
+    def _area_map_title_in(self, frame) -> bool:
+        """The area map's 「战斗 …」/「安全 …」 title reads in ``frame``."""
+        if frame is None:
+            return False
+        header = normalize_text(
+            self.vision.simplify(
+                self.vision.ocr_text(
+                    frame, "区域地图标题", relative_roi=TELEPORT_MAP_HEADER_OCR_RELATIVE_ROI
+                )
+            )
+        )
+        return any(tag in header for tag in AREA_MAP_HEADER_TAGS)
 
     @staticmethod
     def _hunting_ground_panel(texts) -> bool:
@@ -2809,12 +3351,34 @@ class SandboxNavigationMixin:
             self._close_field_map()
 
     def _open_field_map(self) -> str | None:
-        """Open the field's area map (as M does); return its header text."""
+        """Open the field's area map (as M does); return its header text.
+
+        A minimap press that opened nothing is followed by the game's own
+        key M, only on a confirmed field (remedy 4,
+        docs/dev-notes/bug-prevention.md); 跑商's walk to the merchant does
+        the same (Leo 2026-10-20: every step has a second way)."""
         self.task.operate_click(
             MINIMAP_CENTER_REFERENCE[0] / 1920,
             MINIMAP_CENTER_REFERENCE[1] / 1080,
             after_sleep=1.0,
         )
+        header = self._field_map_opened()
+        if header is None and self._press_area_map_key():
+            header = self._field_map_opened()
+        return header
+
+    def _press_area_map_key(self) -> bool:
+        """M, sent only while the field's key caps show (the map, a page or
+        主页 is not up).  True when it was sent."""
+        tap_key = getattr(self.task, "tap_key", None)
+        if not callable(tap_key) or not self._field_keycaps_shown():
+            return False
+        self._status("区域地图", f"点小地图没打开地图，改按快捷键 {AREA_MAP_KEY}")
+        self.task.log_info(f"跑图：点小地图没打开区域地图，改按快捷键 {AREA_MAP_KEY}。")
+        return bool(tap_key(AREA_MAP_KEY, after_sleep=1.0))
+
+    def _field_map_opened(self) -> str | None:
+        """The area map's header once it shows, within WALK_MAP_OPEN_TIMEOUT."""
         end_at = monotonic() + WALK_MAP_OPEN_TIMEOUT
         while True:
             header = self._field_map_header()
@@ -2827,10 +3391,14 @@ class SandboxNavigationMixin:
             self.task.sleep(0.4)
 
     def _close_field_map(self) -> None:
-        """Close the area map; press again only while its header is still read.
+        """Close the area map; press again only while its header is still read,
+        then the game's back key Esc.
 
         One blind press assumed the field was back: a swallowed press left the
-        map open and the next field step clicked on the map instead.
+        map open and the next field step clicked on the map instead.  A map
+        still open after both presses covered the ≡ button and the rest of the
+        card failed behind it (player 1080p 2026-10-23, 第9章); Esc is the next
+        remedy (docs/dev-notes/bug-prevention.md; Leo 「關不掉 就按ESC做備案」).
         """
         self.task.operate_click(*SANDBOX_LARGE_MAP_RETURN_RELATIVE_POINT, after_sleep=1.0)
         end_at = monotonic() + FIELD_MAP_CLOSE_TIMEOUT
@@ -2844,8 +3412,7 @@ class SandboxNavigationMixin:
                 return
             open_hits += 1
             if monotonic() >= end_at:
-                self.task.log_warning(f"跑商：区域地图关闭后标题仍在：{header}。")
-                return
+                break
             if not reclicked and open_hits >= 2:
                 reclicked = True
                 open_hits = 0
@@ -2853,6 +3420,21 @@ class SandboxNavigationMixin:
                 self.task.operate_click(*SANDBOX_LARGE_MAP_RETURN_RELATIVE_POINT, after_sleep=0.5)
                 continue
             self.task.sleep(0.4)
+        escaped = False
+        tap_escape = getattr(self.task, "tap_escape", None)
+        if callable(tap_escape):
+            self._status("区域地图", "按两次返回都没关，改按 Esc")
+            self.task.log_info("跑图：区域地图按两次返回都没关，改按 Esc。")
+            escaped = bool(tap_escape(after_sleep=0.5))
+            if escaped and wait_for(
+                lambda: not self._area_map_open(),
+                FIELD_MAP_CLOSE_TIMEOUT,
+                sleep=self.task.sleep,
+                clock=monotonic,
+            ):
+                return
+        how = "按返回和 Esc 都没关掉" if escaped else "按两次返回都没关掉"
+        self.task.log_warning(f"跑图：区域地图{how}，标题还在：{header}。")
 
     def _walk_to_collection_map(
         self,
@@ -3242,11 +3824,41 @@ class SandboxNavigationMixin:
             return self.return_teleport_map_to_sandbox(card.number)
         first = self._seek_collection_page(card, context, main_target)
         if isinstance(first, NavigationResult):
-            return first
+            return self._town_by_npc_after_failed_seek(card, context, first)
         return self._click_collection_destination(
             card,
             main_target,
             first,
+        )
+
+    def _town_by_npc_after_failed_seek(
+        self,
+        card: CardSpec,
+        context: AreaMapContext,
+        failed: NavigationResult,
+    ) -> NavigationResult:
+        """The teleport map never showed the town by name: close it and take
+        the ≡ menu's 艾琳 (she stands in the town) before the card is skipped
+        (Leo 2026-10-31 「還有沒有辦法不會再出錯」)."""
+        town = card.targets[0]
+        self._status("导航状态", f"{failed.message}，关掉传送阵地图，改用≡选单的{TOWN_NPC_NAV_ENTRY}回{town.title}")
+        self.task.log_info(
+            f"跑图：传送阵地图没认出{town.title}，改用小地图≡选单找{TOWN_NPC_NAV_ENTRY}回主城。"
+        )
+        self._close_area_map(context)
+        if (
+            self._travel_via_nav_menu(TOWN_NPC_NAV_ENTRY)
+            and self.current_collection_target(card) == town.key
+        ):
+            return NavigationResult(
+                True, ScreenState.SANDBOX, f"经{TOWN_NPC_NAV_ENTRY}到达{town.title}"
+            )
+        why = getattr(self, "_nav_failure", "") or f"经{TOWN_NPC_NAV_ENTRY}也没到{town.title}"
+        return NavigationResult(
+            False,
+            failed.state,
+            f"{failed.message}；改用≡选单的{TOWN_NPC_NAV_ENTRY}也没回到{town.title}（{why}）",
+            map_page_mode=failed.map_page_mode,
         )
 
     def advance_collection_map(

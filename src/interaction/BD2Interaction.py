@@ -103,8 +103,9 @@ class BD2Interaction(PostMessageInteraction):
                     # left button held down.
                     try:
                         self.post(win32con.WM_LBUTTONUP, 0, win32api.MAKELONG(*held))
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        # 「失败后」 keeps this cleanup line from standing as the step's reason.
+                        logger.warning(f"失败后放开左键也出错，游戏里左键可能还按着：{exc!r}")
                 time.sleep(0.03)
                 try:
                     SetCursorPos(old)
@@ -249,10 +250,26 @@ class BD2Interaction(PostMessageInteraction):
             logger.error("restore cursor exception", e)
 
     def block_input(self):
-        self.user32.BlockInput(True)
+        """Keep the player's mouse off the cursor the tool moves: held in the
+        takeover monitor's hook when it runs (keys and the status bar's
+        buttons still work, src/utils/mouse_guard), else BlockInput."""
+        from src.utils import mouse_guard
+
+        held = mouse_guard.start(self.cursor_position)
+        self._blocks = getattr(self, "_blocks", [])
+        self._blocks.append(held)
+        if not held:
+            self.user32.BlockInput(True)
 
     def unblock_input(self):
-        self.user32.BlockInput(False)
+        from src.utils import mouse_guard
+
+        blocks = getattr(self, "_blocks", [])
+        held = blocks.pop() if blocks else False
+        if held:
+            mouse_guard.stop()
+        else:
+            self.user32.BlockInput(False)
 
     def move_mouse_relative(self, dx, dy):
         with self._input_lock:

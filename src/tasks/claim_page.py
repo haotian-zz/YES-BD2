@@ -14,6 +14,7 @@ read as 「无新奖励」.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic
 from types import SimpleNamespace
@@ -27,12 +28,12 @@ from src.tasks.task_vision_mixin import (
     REFERENCE_WIDTH,
     TaskVisionMixin,
 )
+from src.utils.home_confirmation import HOME_ANNOUNCEMENT_CLEAR_REFERENCE_POINT
 from src.utils.known_popups import (  # noqa: F401 - re-exported for the tasks
     CONFIRM_TEXT,
     OVERLAY_DISMISS_KEYWORDS,
     REWARD_DIALOG_TITLES,
 )
-from src.utils.home_confirmation import HOME_ANNOUNCEMENT_CLEAR_REFERENCE_POINT
 from src.utils.ocr_utils import keyword_match_count, normalize_ocr_text
 from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS
 from src.utils.wait_limits import (
@@ -136,6 +137,10 @@ def find_red_badges(frame, strip: tuple[int, int, int, int]) -> list[int]:
             found.append(round(y + (cy + ch / 2) / scale))
     return sorted(found)
 
+
+# What the last _claim_all did when it returned True: the pass task tries
+# other places when a badged pass was not claimed (player 2026-10-26).
+CLAIM_PRESSED, CLAIM_NO_BUTTON, CLAIM_GREY = "pressed", "no_button", "grey"
 
 # Seconds a claim button is looked for before 「跳过」.
 CLAIM_BUTTON_WAIT = 3.0 + SLOW_PC_GRACE_SECONDS
@@ -372,9 +377,11 @@ class ClaimPageMixin(TaskVisionMixin):
     def _open_page_from_home(
         self,
         label: str,
-        entry_point: tuple[int, int],
+        entry_point: tuple[int, int] | Callable[[], tuple[int, int]],
         title_keywords: tuple[str, ...],
     ) -> bool:
+        """``entry_point`` may be a function, asked on 主页 before each click
+        (an icon found by its label, which moves when event icons come and go)."""
         if not self._wait_for_home_confirmation(f"{label}入口前主页确认", timeout=3.0):
             # Started from another page (e.g. a task clicked while the bag
             # was open): go home first instead of failing (2026-09-28).
@@ -390,7 +397,8 @@ class ClaimPageMixin(TaskVisionMixin):
         self._sleep_after_recognition()
         for attempt in range(1, ENTRY_CLICK_ATTEMPTS + 1):
             self.info_set("当前阶段", f"打开{label}（第{attempt}次点击）")
-            self._click_reference(*entry_point, after_sleep=0.8)
+            point = entry_point() if callable(entry_point) else entry_point
+            self._click_reference(*point, after_sleep=0.8)
             if self._wait_for_title(label, title_keywords, timeout=ENTRY_RETRY_SECONDS, quiet=True):
                 return True
             # The game sometimes swallows a click on a confirmed home screen;
@@ -464,7 +472,9 @@ class ClaimPageMixin(TaskVisionMixin):
             if text != last_text:
                 last_text, same_since = text, now
             elif text and now - same_since >= STUCK_TITLE_SECONDS:
-                self.log_info(f"{label}：画面停在「{text}」{STUCK_TITLE_SECONDS:.0f}秒未变化，停止等待。")
+                self.log_info(
+                    f"{label}：画面停在「{text}」{STUCK_TITLE_SECONDS:.0f}秒未变化，停止等待。"
+                )
                 break
             if wait is not None:
                 if wait.over(
@@ -520,13 +530,16 @@ class ClaimPageMixin(TaskVisionMixin):
         self.info_set(f"{label}按钮 OCR", self._boxes_text(boxes) or "-")
         if target is None:
             self.log_info(f"{label}：未找到 {'/'.join(button.keywords)} 按钮，跳过。")
+            self._claim_outcome = CLAIM_NO_BUTTON
             return True
         if claim_button_dimmed(frame, target):
             # Grey = nothing to claim (Leo 2026-09-29): pressing it and then
             # proving the page settled cost ~5 s per button.
             self.info_set(f"{label}结果", "按钮未亮起，无可领取")
             self.log_info(f"{label}：按钮未亮起，无可领取，跳过。")
+            self._claim_outcome = CLAIM_GREY
             return True
+        self._claim_outcome = CLAIM_PRESSED
         baseline = self._frame_brightness(frame)
         self._sleep_after_recognition()
         self.info_set("当前阶段", f"{label}：点击领取")

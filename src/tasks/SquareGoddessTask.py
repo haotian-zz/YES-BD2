@@ -1,4 +1,3 @@
-import json
 import re
 from pathlib import Path
 from time import monotonic
@@ -20,7 +19,7 @@ from src.tasks.map_trade.navigator_constants import (
     AUTO_MOVE_CANCEL_REFERENCE_POINT,
     AUTO_MOVE_IDLE_READS,
 )
-from src.utils import task_vision
+from src.utils import day_record, task_vision
 from src.utils.calibration import FHD_1080, HD_720
 from src.utils.cartridge_quick_switch import (
     CHARACTER_CATEGORY_LABEL,
@@ -63,8 +62,16 @@ from src.utils.image_utils import (
     reference_roi_frame,
     stabilize_template_match,
 )
-from src.utils.ocr_utils import normalize_ocr_text
-from src.utils.wait_limits import STUCK_SECONDS, StillTimer, capped, is_loading_dark, load_wait, scene_at_press
+from src.utils.ocr_utils import keyword_read, normalize_ocr_text
+from src.utils.wait_limits import (
+    STUCK_SECONDS,
+    MotionWatch,
+    StillTimer,
+    capped,
+    is_loading_dark,
+    load_wait,
+    scene_at_press,
+)
 
 REFERENCE_WIDTH = FHD_1080.width
 REFERENCE_HEIGHT = FHD_1080.height
@@ -79,6 +86,13 @@ SQUARE_HOME_POINT = (1797 / REFERENCE_WIDTH, 63 / REFERENCE_HEIGHT)
 # The game's shortcut shown under that button (Leo 2026-10-11 「我點H就回到主頁了」).
 SQUARE_HOME_KEY = "H"
 GODDESS_NAVIGATION_CLICKED = "navigation_clicked"
+# Every look read the square's right side and found no daily row at all.
+GODDESS_NAVIGATION_ABSENT = "navigation_absent"
+# The wish row leaves the square once the day's wish is made, by the tool, by
+# hand or on another PC (Leo 2026-10-28 「我明明是已經許願完的 但他卻判失敗」
+# 「應該判定已跳過 已完成就好」): no row, its key E and its usual spot both
+# start no walk, and the square still on screen = wished today.
+GODDESS_WISHED_NOTE = "今天已经许愿过"
 GODDESS_NAVIGATION_RETRIES = 2
 # The key shown beside the daily row; it starts the walk to the goddess.
 GODDESS_ROW_KEY = "E"
@@ -220,6 +234,7 @@ class SquareGoddessTask(BaseBD2Task):
             self.log_info("广场女神像已禁用。")
             return True
 
+        self.done_already_note = ""
         self.info_set("状态", "广场女神像启动。")
         self.log_info("广场女神像：开始从主页进入梦幻广场。")
         if not self._enter_square_from_home():
@@ -240,6 +255,15 @@ class SquareGoddessTask(BaseBD2Task):
             return False
 
         self._record_wish()
+        if getattr(self, "done_already_note", ""):
+            self.info_set("状态", "今天已许愿，跳过。")
+            self._status_set("女神像许愿结果", "今天已许愿")
+            if not self._return_home_from_square():
+                self.info_set("状态", "广场女神像失败：今天已许愿，但未能返回主页。")
+                return False
+            self.info_set("状态", "今天已许愿，跳过并返回主页。")
+            self.log_completion("广场女神像：今天已经许愿过，跳过并返回主页。")
+            return True
         self.info_set("状态", "女神像许愿完成。")
         self._status_set("女神像许愿结果", "完成")
         if not self._return_home_from_square():
@@ -261,12 +285,20 @@ class SquareGoddessTask(BaseBD2Task):
         )
         self.info_set("广场主页点击次数", f"1/{max_clicks}")
         self.operate_click(*SQUARE_HOME_POINT, after_sleep=1.0)
-        return self._wait_for_cartridge_home(
+        if self._wait_for_cartridge_home(
             timeout=float(self.config.get("广场返回主页等待秒数", STUCK_SECONDS)),
             retry_home_clicks=max_clicks - 1,
             retry_interval=retry_interval,
             total_home_clicks=max_clicks,
-        )
+        ):
+            return True
+        # Player summary v0.2.21 2026-10-29: the square's own house button and
+        # H were the only ways out (Leo 「要有備用方案」): the shared way home
+        # (closes popups, back, H, Esc, waits out loading) before giving up.
+        from src.tasks.recovery import recover_to_home
+
+        self.log_info("广场女神像：广场的主页按钮和 H 都没回到主页，改用通用的回主页方法。")
+        return bool(recover_to_home(self))
 
     def _enter_square_from_home(self) -> bool:
         """The square card is clicked where its picture is.  When the picture
@@ -498,7 +530,7 @@ class SquareGoddessTask(BaseBD2Task):
             self.sleep(interval)
 
         self.log_info(
-            "广场女神像：未同时确认左列关键词、亮度和抽抽乐文字，"
+            "广场女神像：还没认出主页（左边按钮字样、画面亮度、抽抽乐字样没有同时对上），"
             f"left={last_left_hits}/{HOME_LEFT_COLUMN_REQUIRED_HITS}, "
             f"p95={last_p95:.0f}, ocr={last_gacha_text or '-'}。"
         )
@@ -521,8 +553,10 @@ class SquareGoddessTask(BaseBD2Task):
             frame = self.capture_frame()
             text = self._ocr_text(frame, name="卡带选择页")
             last_text = text or last_text
+            normalized = self._normalize_text(text)
             match_count = sum(
-                1 for pattern in QUICK_SWITCH_PAGE_PATTERNS if self._matches_any(text, [pattern])
+                keyword_read(self._normalize_text(pattern), normalized)
+                for pattern in QUICK_SWITCH_PAGE_PATTERNS
             )
             self.info_set("卡带选择页 OCR", text or "-")
             self.info_set(
@@ -605,36 +639,11 @@ class SquareGoddessTask(BaseBD2Task):
     # hide the morning's wish: the wish day is kept in its own file.
     WISH_RECORD_PATH = Path("configs") / "goddess_wish.json"
 
-    def _wish_path(self) -> Path:
-        from src.utils import accounts, test_run
-
-        path = Path(accounts.scoped(self.WISH_RECORD_PATH))
-        return test_run.scratch() / path if test_run.active() else path
-
-    @staticmethod
-    def _game_day() -> str:
-        from datetime import datetime
-
-        from src.tasks.map_trade.progress import UTC_PLUS_8, daily_cycle_key
-
-        return daily_cycle_key(datetime.now(UTC_PLUS_8))
-
     def _wished_today(self) -> bool:
-        try:
-            data = json.loads(self._wish_path().read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return False
-        return isinstance(data, dict) and data.get("day") == self._game_day()
+        return day_record.done_today(self.WISH_RECORD_PATH)
 
     def _record_wish(self) -> None:
-        try:
-            path = self._wish_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps({"day": self._game_day()}), encoding="utf-8"
-            )
-        except OSError:
-            pass
+        day_record.record_today(self.WISH_RECORD_PATH)
 
     def _pray_at_goddess(self) -> bool:
         self.info_set("当前阶段", "检查广场感叹号")
@@ -654,20 +663,33 @@ class SquareGoddessTask(BaseBD2Task):
             # made: a second run the same day is not a failure (2026-09-28).
             self.info_set("女神像许愿 OCR", "今日已许愿（导航已消失）")
             self.log_info("广场女神像：今天已经许愿过，每日导航已消失。")
+            self.done_already(GODDESS_WISHED_NOTE)
             return True
+        row_absent = navigation_result == GODDESS_NAVIGATION_ABSENT
         if navigation_result != GODDESS_NAVIGATION_CLICKED and self._walk_by_key():
             navigation_result = GODDESS_NAVIGATION_CLICKED
         if navigation_result != GODDESS_NAVIGATION_CLICKED and (
             self._press_row_where_it_usually_is()
         ):
             navigation_result = GODDESS_NAVIGATION_CLICKED
+        if navigation_result != GODDESS_NAVIGATION_CLICKED and row_absent and (
+            self._square_still_shown()
+        ):
+            self.info_set("女神像许愿 OCR", "今日已许愿（没有每日导航）")
+            self.log_info(
+                "广场女神像：广场右边没有「移动至艾力克史温女神像」的每日导航，"
+                f"按 {GODDESS_ROW_KEY} 和点它平常的位置都没开始走，广场画面也还在："
+                "今天已经许愿过（自己许的或别的电脑许的），跳过。"
+            )
+            self.done_already(GODDESS_WISHED_NOTE)
+            return True
         if navigation_result != GODDESS_NAVIGATION_CLICKED:
             self.info_set("女神像许愿 OCR", "未确认女神像每日导航，停止本次任务")
-            # Player report 2026-10-11: the row was simply not there; a wish
-            # made by hand removes it and the tool cannot see that.
             self.log_info(
-                "广场女神像：广场右边没有出现「移动至艾力克史温女神像」的每日导航，"
-                "这次没有许愿（今天自己许过愿的话就是这样，工具看不到）。"
+                "广场女神像：右边有任务列表的字但认不出女神像那一行，"
+                f"按 {GODDESS_ROW_KEY} 和点它平常的位置都没开始走，这次没有许愿。"
+                if not row_absent else
+                "广场女神像：每日导航没出现，按了也没开始走，而且画面已经不是广场，这次没有许愿。"
             )
             return False
         self.info_set("当前阶段", "等待并完成女神像许愿")
@@ -679,6 +701,19 @@ class SquareGoddessTask(BaseBD2Task):
 
         self.info_set("当前阶段", "祈祷完成后检查广场感叹号")
         self._click_square_notice_if_present()
+        return True
+
+    def _square_still_shown(self) -> bool:
+        """The square's picture on two fresh frames: nothing covers the field,
+        so the missing row is the game's own answer, not a popup over it."""
+        for look in range(2):
+            if look:
+                self.sleep(0.35)
+            frame = self.capture_frame()
+            result = self._match(frame, FANTASIA_SQUARE_TEMPLATE)
+            self.info_set("梦幻广场", f"{result.score:.3f}")
+            if not self._passes(result, FANTASIA_SQUARE_TEMPLATE):
+                return False
         return True
 
     def _prayer_prompt_steady(self) -> bool:
@@ -715,12 +750,19 @@ class SquareGoddessTask(BaseBD2Task):
         self.tap_key(GODDESS_ROW_KEY, after_sleep=2.0)
 
     def _walk_or_prompt_within(self, seconds: float) -> bool:
+        """True once the prayer prompt, the walk banner or a field that keeps
+        panning shows (YES-BD2 #62: the banner went unread while walking)."""
         end_at = monotonic() + seconds
+        motion = MotionWatch()
         while True:
+            frame = self.capture_frame()
             point, text = self._ocr_pattern_click_point(
-                self.capture_frame(), GODDESS_PRAY_PATTERNS, name="女神像许愿", roi=None
+                frame, GODDESS_PRAY_PATTERNS, name="女神像许愿", roi=None
             )
             if point is not None or self._walk_banner_shown(text):
+                return True
+            if motion.moving(frame):
+                self.log_info("广场女神像：没读到「自动移动中」，但画面一直在动，当作已经在走。")
                 return True
             if monotonic() >= end_at:
                 return False
@@ -733,19 +775,11 @@ class SquareGoddessTask(BaseBD2Task):
         x, y = GODDESS_ROW_USUAL_POINT
         self.log_info("广场女神像：每日导航读不到，照它平常的位置点一下。")
         self._click_client(round(x * width), round(y * height), width, height, after_sleep=1.0)
-        end_at = monotonic() + GODDESS_ROW_PRESS_CONFIRM_SECONDS
-        while True:
-            frame = self.capture_frame()
-            point, text = self._ocr_pattern_click_point(
-                frame, GODDESS_PRAY_PATTERNS, name="女神像许愿", roi=None
-            )
-            if point is not None or self._walk_banner_shown(text):
-                self.log_info("广场女神像：点了以后开始走向女神像了。")
-                return True
-            if monotonic() >= end_at:
-                self.log_info("广场女神像：照平常位置点了也没开始走。")
-                return False
-            self.sleep(0.5)
+        if self._walk_or_prompt_within(GODDESS_ROW_PRESS_CONFIRM_SECONDS):
+            self.log_info("广场女神像：点了以后开始走向女神像了。")
+            return True
+        self.log_info("广场女神像：照平常位置点了也没开始走。")
+        return False
 
     def _click_square_notice_if_present(self) -> bool:
         # The square "!" is the field F button: it shows while the characters
@@ -761,9 +795,11 @@ class SquareGoddessTask(BaseBD2Task):
     ) -> str | None:
         end_at = monotonic() + max(0.0, timeout)
         previous = None
+        always_absent = None
         while monotonic() <= end_at:
             frame = self.capture_frame()
             observation = self._observe_goddess_navigation(frame)
+            always_absent = always_absent is not False and observation.state == "absent"
             nav = observation.navigation
             if nav is not None and previous is not None:
                 tolerance = max(nav.height, previous.height)
@@ -772,7 +808,7 @@ class SquareGoddessTask(BaseBD2Task):
                     return GODDESS_NAVIGATION_CLICKED
             previous = nav
             self.sleep(interval)
-        return None
+        return GODDESS_NAVIGATION_ABSENT if always_absent else None
 
     def _wait_for_goddess_prayer_completion(
         self,
@@ -792,6 +828,9 @@ class SquareGoddessTask(BaseBD2Task):
         )
         walking_since = None
         walk_still = StillTimer()
+        # The banner can go unread while the field pans (YES-BD2 #62): a
+        # moving field is the walk too, and nothing is pressed during it.
+        walk_motion = MotionWatch()
         talked = False
         # Nothing to read, no walk and no press: the screen is not getting
         # anywhere (the overall limit only holds a walk that keeps moving).
@@ -808,7 +847,10 @@ class SquareGoddessTask(BaseBD2Task):
             )
             self.info_set("女神像许愿 OCR", text or "-")
 
-            if point is None and self._walk_banner_shown(text):
+            banner = self._walk_banner_shown(text)
+            # After a wish press the wish itself may move the picture.
+            panning = walk_motion.moving(frame) and not (click_count or talked)
+            if point is None and (banner or panning):
                 now = monotonic()
                 idle_since = now
                 walking_since = now if walking_since is None else walking_since
