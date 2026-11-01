@@ -20,7 +20,7 @@ def _collector():
     return collector
 
 
-CARD = SimpleNamespace(card_id="Q_cp1", label="角色卡1")
+CARD = SimpleNamespace(card_id="Q_sp1", label="第1章")
 
 
 class UnconfirmedSkipTest(unittest.TestCase):
