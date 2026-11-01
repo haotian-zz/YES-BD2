@@ -59,7 +59,7 @@ class EmptySkillBarStopTest(unittest.TestCase):
 
         self.assertIsNone(self._fail(collector, CARD))
         self.assertIsNone(self._fail(collector, CARD))  # the same card run again
-        result = self._fail(collector, SimpleNamespace(card_id="Q_cp2", label="角色卡2"))
+        result = self._fail(collector, SimpleNamespace(card_id="Q_sp2", label="第2章"))
 
         self.assertIsInstance(result, CollectionResult)
         self.assertFalse(result.success)

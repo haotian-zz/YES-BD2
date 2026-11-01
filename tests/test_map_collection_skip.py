@@ -44,6 +44,7 @@ class SkipBrokenCardTest(unittest.TestCase):
         home_ok=True,
         recovered=None,
         unfinished=(),
+        search=None,
     ):
         events = []
         warnings = []
@@ -104,7 +105,7 @@ class SkipBrokenCardTest(unittest.TestCase):
             self.navigator = navigator
             collector = Collector(task, object(), navigator, progress)
             collector._absorb_used_up = lambda **_kwargs: None
-            collector._ensure_search = lambda **_kwargs: None
+            collector._ensure_search = search or (lambda **_kwargs: None)
             collector._use_actions = (
                 (lambda actions, **kwargs: use_actions(progress, events, actions, **kwargs))
                 if use_actions
@@ -174,15 +175,13 @@ class SkipBrokenCardTest(unittest.TestCase):
             selects.append(card_id)
             return ENTERED
 
-        def use_actions(progress, events, actions, *, card_id, map_role):
-            if card_id == "Q_cp2":
+        def search(**_kwargs):
+            if selects[-1] == "Q_cp2":
                 return SkillExecutionResult(False, message="未确认采集技能栏")
-            events.append(("collect", card_id, map_role.value))
-            _seed_action_records(progress, card_id, map_role.value)
-            return SkillExecutionResult(True)
+            return None
 
         result, events, _warnings, _state = self._run(
-            ("Q_cp2", "Q_ep7"), select=select, use_actions=use_actions
+            ("Q_cp2", "Q_ep7"), select=select, search=search
         )
 
         self.assertEqual(["Q_cp2", "Q_ep7"], selects)
