@@ -79,6 +79,15 @@ SKILL_BAR_EMPTY_STOP_CARDS = 2
 
 # A card skipped on its story talk waits for the player, not for a retry.
 STORY_NOT_PLAYED_NOTE = "剧情还没推进"
+OWN_WHEEL_NOTE = (
+    "这张卡自己的技能轮盘上没有能用的采集技能（角色卡/活动卡的剧情推进后才会开放，"
+    "或要在这张卡的技能轮盘里装上）"
+)
+
+
+def _own_wheel_card(card_id: str) -> bool:
+    """角色卡 / 活动卡: a skill wheel of their own (no TAB groups)."""
+    return card_id.startswith(("Q_cp", "Q_ep"))
 
 class Collector(SkillExecutionMixin):
     def __init__(
@@ -677,6 +686,7 @@ class Collector(SkillExecutionMixin):
             not reason.startswith("进不去")
             and NO_ACTIVE_TELEPORT_NOTE not in reason
             and STORY_NOT_PLAYED_NOTE not in reason
+            and OWN_WHEEL_NOTE not in reason
         )
 
     def _forget_card_problems(self, card) -> None:
@@ -786,6 +796,13 @@ class Collector(SkillExecutionMixin):
             return self._skill_failure(card.card_id, stage, result, completed_this_run)
         self._record_skill_failure(card.card_id, stage, result)
         problem = f"{stage}技能操作失败" + (f"：{result.message}" if result.message else "")
+        if _own_wheel_card(card.card_id) and result.message == "未确认采集技能栏":
+            # Character and event cards carry their own wheel, not the story
+            # cards' three groups; until their story is played its collection
+            # skills are off (bd2 session 2026-10-31: 角色卡2 only 探查, 角色卡3
+            # 吸收 ⊘).  A retry fails the same way, so none is made.
+            problem = f"{stage}技能操作失败：{OWN_WHEEL_NOTE}"
+            lacking = False
         self._skill_skips.setdefault(card.card_id, problem)
         if self._press_probably_taken(result):
             self._unconfirmed_cards.add(card.card_id)

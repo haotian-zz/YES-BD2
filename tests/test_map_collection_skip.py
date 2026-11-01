@@ -166,6 +166,29 @@ class SkipBrokenCardTest(unittest.TestCase):
         self.assertTrue(any("角色卡3进去时在放剧情对话" in line for line in warnings))
         self.assertIn("剧情还没推进", result.message)
 
+    def test_a_character_card_without_collection_skills_is_not_retried(self):
+        # bd2 session 2026-11-01: 角色卡2 「未确认采集技能栏」 twice a run.
+        selects = []
+
+        def select(card_id, *, enter_visually_complete):
+            selects.append(card_id)
+            return ENTERED
+
+        def use_actions(progress, events, actions, *, card_id, map_role):
+            if card_id == "Q_cp2":
+                return SkillExecutionResult(False, message="未确认采集技能栏")
+            events.append(("collect", card_id, map_role.value))
+            _seed_action_records(progress, card_id, map_role.value)
+            return SkillExecutionResult(True)
+
+        result, events, _warnings, _state = self._run(
+            ("Q_cp2", "Q_ep7"), select=select, use_actions=use_actions
+        )
+
+        self.assertEqual(["Q_cp2", "Q_ep7"], selects)
+        self.assertIn(("collect", "Q_ep7", "main_area"), events)
+        self.assertIn("技能轮盘上没有能用的采集技能", result.message)
+
     def test_every_missing_card_is_named_once(self):
         result, _events, _warnings, _state = self._run(
             ("Q_sp1", "Q_sp2"), select=lambda card_id, **_k: NOT_FOUND
