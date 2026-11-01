@@ -115,6 +115,8 @@ PVP_FOLLOWERS_STAND_SECONDS = 5.0
 PVP_FOLLOWERS_KEY_SETTLE_SECONDS = 1.0
 PVP_FOLLOWERS_DISMISSED_SETTLE_SECONDS = 1.5
 PVP_AUTO_BATTLE_SCREEN_ROI = (1470, 910, 170, 150)
+# Pre-battle header (1920x1080): season state (结束) and rank under the medal.
+PVP_SEASON_HEADER_ROI = (220, 10, 420, 90)
 # Reference ROI for the multiplier value in the main auto-battle popup. The value
 # sits directly left of the settings gear (reference x ≈ 868 at 1280x720); the ROI
 # must exclude the gear, otherwise the OCR det box merges it into the value and the
@@ -435,6 +437,12 @@ class PVPTask(BaseBD2Task):
                 # Leo 2026-10-05: going back can bring up the rank-down page
                 # (段位下滑) here too; it sat on it until he moved the mouse.
                 # Confirm it the same way as after a battle.
+                self._ensure_pvp_hub_after_leave()
+                return self._return_home_from_pvp_hub()
+            if start_state == "season_ended":
+                self.info_set("状态", "赛季已结束，今天没有可打的。")
+                self.log_completion("镜中之战：赛季已结束，自动战斗不可用，跳过，等下个赛季。")
+                self._click_reference(*PVP_STAGE_BACK_REFERENCE_POINT, after_sleep=1.0)
                 self._ensure_pvp_hub_after_leave()
                 return self._return_home_from_pvp_hub()
             if start_state in ("ap_depleted", "ap_shortage"):
@@ -1069,7 +1077,7 @@ class PVPTask(BaseBD2Task):
         # nothing, so the menu is closed and opened once more before giving up.
         for switch_try in range(PVP_FREE_SWITCH_MENU_TRIES):
             if not self._open_auto_battle_menu():
-                return "failed"
+                return "season_ended" if self._season_ended() else "failed"
             self._free_cocktails_short = False
             if self._ensure_free_ap_enabled():
                 break
@@ -1099,6 +1107,20 @@ class PVPTask(BaseBD2Task):
         self.info_set("当前阶段", "点击战斗开始")
         self.info_set("PVP 开始战斗 OCR", "跳过前置 OCR，按固定比例点击")
         return self._press_battle_start(multiplier)
+
+    def _season_ended(self) -> bool:
+        """The pre-battle header reads 结束 between seasons.
+
+        bd2 session 2026-11-01: 「结束 · 未进入名次」, cocktails 40/40, and
+        three presses on 自动战斗 opened nothing; nothing to fight until the
+        next season, so the day counts as done (user: 记成跳过).
+        """
+        ended, text = self._wait_for_ocr_patterns(
+            [r"结束"], timeout=1.0, name="PVP 赛季状态", roi=PVP_SEASON_HEADER_ROI
+        )
+        if ended:
+            self.log_info(f"镜中之战：赛季已结束（左上读到「{text}」），自动战斗不可用。")
+        return ended
 
     def _open_auto_battle_menu(self) -> bool:
         """Press 自动战斗 on the pre-battle screen until its menu shows."""

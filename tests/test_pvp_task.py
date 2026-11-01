@@ -2785,6 +2785,27 @@ class PVPTaskHelperTest(unittest.TestCase):
         self.assertEqual(("started", 2, 1), self._start_with_switch([False, True]))
         self.assertEqual(("failed", 2, 2), self._start_with_switch([False, False]))
 
+    def test_a_menu_that_never_opens_after_the_season_ended_is_season_ended(self):
+        # bd2 session 2026-11-01: header 「结束 · 未进入名次」, 自动战斗 dead.
+        task = object.__new__(PVPTask)
+        task.config = {}
+        task.info_set = lambda *_args, **_kwargs: None
+        task.log_info = lambda *_args, **_kwargs: None
+        task._stage_move_mode = lambda: "click"
+        task._click_pvp_stage_once = lambda _timeout: True
+        header = ["结束 未进入名次 胜利分 1600"]
+
+        def ocr(patterns, *_args, **kwargs):
+            if kwargs.get("name") == "PVP 赛季状态":
+                return bool(header) and "结束" in header[0], header[0] if header else ""
+            return True, "自动战斗"
+
+        task._wait_for_ocr_patterns = ocr
+        task._open_auto_battle_menu = lambda: False
+        self.assertEqual("season_ended", PVPTask._start_auto_battle(task, 40))
+        header[0] = "第3赛季 未进入名次 胜利分 1600"
+        self.assertEqual("failed", PVPTask._start_auto_battle(task, 40))
+
     def _walk_with_stage_gone(self, loaded):
         task = object.__new__(PVPTask)
         task.info_set = lambda *_args, **_kwargs: None
