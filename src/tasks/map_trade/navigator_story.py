@@ -2303,6 +2303,8 @@ class StoryCardNavigationMixin:
         not be found).  The talk is skipped (F2, then 「跳过对话」's 确认), as
         主线推图 does, and the card is noted: its skills stay off until the
         player plays its story (user 2026-11-01: 退出这张卡带)."""
+        if not isinstance(frame, np.ndarray) or frame.ndim != 3 or frame.shape[0] < 100:
+            return False
         if getattr(self, "story_talk_skipped", False):
             boxes = self.vision.ocr_boxes(frame, "跳过对话确认", relative_roi=TALK_SKIP_CONFIRM_REGION)
             texts = [normalize_text(self.vision.simplify(str(getattr(b, "name", "")))) for b in boxes]

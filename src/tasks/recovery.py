@@ -299,6 +299,11 @@ def _recover_to_home(task, attempts: int) -> bool:
             except Exception as exc:  # navigator paths assume trade context
                 task.log_warning(f"恢复主页：导航返回失败：{exc}")
             continue
+        # Back, H and Esc do nothing in a story talk (bd2 session
+        # 2026-11-01: 角色卡3's three-minute opening outlasted every attempt).
+        if navigator._skip_story_talk(vision.capture()):
+            task.log_info("恢复主页：画面在放剧情对话，按跳过。")
+            continue
         outcome = _handle_dialog(task, vision)
         if outcome == "title":
             # Clicking here does nothing useful; auto-login takes over.
