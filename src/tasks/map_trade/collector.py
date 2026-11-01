@@ -12,6 +12,7 @@ from src.tasks.map_trade.card_status import (
     CollectionCardSelectionOutcome,
     CollectionCardSelectionResult,
 )
+from src.tasks.map_trade.navigator_sandbox import NO_WAY_TO_TOWN_NOTE
 from src.tasks.map_trade.collector_constants import (
     ABSORB_ACTION,
     BATTLE_ACTIONS,
@@ -687,6 +688,8 @@ class Collector(SkillExecutionMixin):
             and NO_ACTIVE_TELEPORT_NOTE not in reason
             and STORY_NOT_PLAYED_NOTE not in reason
             and OWN_WHEEL_NOTE not in reason
+            # 第13章 10-28 and 11-01: all three ways home failed both times.
+            and NO_WAY_TO_TOWN_NOTE not in reason
         )
 
     def _forget_card_problems(self, card) -> None:

@@ -224,6 +224,10 @@ SANDBOX_MAP_CLOSE_TIMEOUT = 3.0
 # What reopens a circle's 传送页 that did not open after its hand.
 CIRCLE_PAGE_AGAIN = ("hand", "key")
 
+# Every way to a circle failed (no circle near, none on the area map, the ≡
+# menu without 狩猎场/艾琳): the same map fails the same way again.
+NO_WAY_TO_TOWN_NOTE = "小地图导航也没能去狩猎场或艾琳"
+
 class SandboxNavigationMixin:
     @staticmethod
     def _format_sandbox_matches(
@@ -3015,7 +3019,7 @@ class SandboxNavigationMixin:
                 False,
                 walked.state,
                 f"{opened.message}；走去地图传送门失败（{walked.message}）；"
-                "小地图导航也没能去狩猎场或艾琳"
+                f"{NO_WAY_TO_TOWN_NOTE}"
                 + (f"（{why}）" if (why := getattr(self, "_nav_failure", "")) else ""),
             )
         if entry == HUNTING_GROUND_NAV_ENTRY:
