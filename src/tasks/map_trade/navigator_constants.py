@@ -1162,6 +1162,9 @@ FIRST_CARD_SKIP_TEMPLATE = TemplateSpec(
     roi=(915, 9, 265, 68),
 )
 FIRST_CARD_CONFIRM_REGION = (626, 368, 186, 293)
+# 「跳过对话 / 是否结束剧情观看？」 with 取消 / 确认 (确认 at 1045,780 or
+# 1044,628 in 1080p, src/utils/story_push.py SKIP_CONFIRM_ROI), as fractions.
+TALK_SKIP_CONFIRM_REGION = (0.3, 0.3, 0.7, 0.85)
 # A 确认 seen while waiting to enter a card is pressed only when the button
 # reads exactly 确认 and the dialog around it names nothing that buys or uses
 # something up; such a dialog stops the step instead (review #11).

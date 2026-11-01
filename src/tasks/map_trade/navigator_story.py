@@ -121,6 +121,7 @@ from src.utils.cartridge_quick_switch import (
 )
 from src.utils.ocr_utils import keyword_read
 from src.utils.press_confirm import RETRY_AFTER_SECONDS
+from src.utils import story_push
 
 # 从箱庭点击快速切换按钮的统一识别窗口与点击后停顿。
 QUICK_SWITCH_CLICK_TIMEOUT = 10.0
@@ -213,6 +214,9 @@ STORY_BAR_GUIDED_NUDGES = 2
 STORY_BAR_GUIDED_STEPS = 8
 
 class StoryCardNavigationMixin:
+    # Set while a card is entered: its story talk was skipped (collector).
+    story_talk_skipped = False
+
     def _wait_for_quick_switch_page(self, timeout: float = 10.0) -> bool:
         return self._wait_for_ocr_keywords(
             QUICK_SWITCH_PAGE_KEYWORDS,
@@ -2291,6 +2295,38 @@ class StoryCardNavigationMixin:
         )
         return None
 
+    def _skip_story_talk(self, frame: np.ndarray) -> bool:
+        """A card whose story was never played opens on its talk (bd2 session
+        2026-11-01, 角色卡3: 「代号S莎拉」 speech bubbles, F1/F2/F3 top
+        right, read as loading for a minute, then 「进不去」 and home could
+        not be found).  The talk is skipped (F2, then 「跳过对话」's 确认), as
+        主线推图 does, and the card is noted: its skills stay off until the
+        player plays its story (user 2026-11-01: 退出这张卡带)."""
+        if getattr(self, "story_talk_skipped", False):
+            boxes = self.vision.ocr_boxes(frame, "跳过对话确认", relative_roi=TALK_SKIP_CONFIRM_REGION)
+            texts = [normalize_text(self.vision.simplify(str(getattr(b, "name", "")))) for b in boxes]
+            if any("跳过对话" in text for text in texts):
+                for box, text in zip(boxes, texts):
+                    if text == "确认" and getattr(box, "x", None) is not None:
+                        center = (
+                            round(box.x + box.width / 2),
+                            round(box.y + box.height / 2),
+                        )
+                        self.vision.click_client(center, frame.shape, after_sleep=1.2)  # 不用确认：入场等待下一轮重看画面
+                        self._status("导航状态", "确认跳过卡带剧情对话")
+                        return True
+        frame_1080 = (
+            frame
+            if frame.shape[:2] == (1080, 1920)
+            else cv2.resize(frame, (1920, 1080), interpolation=cv2.INTER_AREA)
+        )
+        if not story_push.icons(frame_1080)["talk_skip"]:
+            return False
+        self.story_talk_skipped = True
+        self.vision.click_reference(*story_push.TALK_SKIP_POINT, after_sleep=1.2)  # 不用确认：下一轮看「跳过对话」
+        self._status("导航状态", "卡带在放剧情对话，按跳过")
+        return True
+
     def enter_probe_story_card(self, probed: ProbedStoryCard) -> NavigationResult:
         """Click the revalidated probe center and confirm a stable sandbox."""
 
@@ -2299,6 +2335,8 @@ class StoryCardNavigationMixin:
     def _handle_story_card_intermediate(self, frame: np.ndarray) -> bool | NavigationResult:
         """True when a known prompt was handled; a failed result stops the wait."""
 
+        if self._skip_story_talk(frame):
+            return True
         prompt = normalize_text(
             self.vision.simplify(
                 self.vision.ocr_text(

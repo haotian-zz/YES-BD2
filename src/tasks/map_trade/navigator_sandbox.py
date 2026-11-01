@@ -905,6 +905,12 @@ class SandboxNavigationMixin:
                     return handled
                 if handled:
                     continue
+            elif (
+                handle_intermediate
+                and last_state == ScreenState.LOADING
+                and self._skip_story_talk(frame)
+            ):
+                continue
             if interval > 0:
                 self.task.sleep(interval)
         return NavigationResult(False, last_state, failure_message)
@@ -980,9 +986,8 @@ class SandboxNavigationMixin:
             frame = self.vision.capture()
             # The black loading screen needs none of the home/field checks
             # (~0.6 s a read; Leo 2026-10-01: 換圖速度).
-            last_state = (
-                ScreenState.LOADING if self._black_frame(frame) else self.classify(frame)
-            )
+            black = self._black_frame(frame)
+            last_state = ScreenState.LOADING if black else self.classify(frame)
             self._status("导航状态", last_state.value)
             if last_state == ScreenState.SANDBOX:
                 hits += 1
@@ -1005,6 +1010,10 @@ class SandboxNavigationMixin:
                         return handled
                     if handled:
                         continue
+                elif handle_intermediate and not black and self._skip_story_talk(frame):
+                    # A story talk over a dark room reads as loading (bd2
+                    # session 2026-11-01, 角色卡3).
+                    continue
             if interval > 0:
                 self.task.sleep(interval)
         return last_state, frame

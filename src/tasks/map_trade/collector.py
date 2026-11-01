@@ -210,13 +210,26 @@ class Collector(SkillExecutionMixin):
             # What _skip_card needs to tell whether a later card follows.
             self._follow_args = (cards_this_run, card_limit, allowed)
             selected = None
+            self.navigator.story_talk_skipped = False
             for _attempt in range(card_retries):
                 selected = self.navigator.select_collection_card(
                     card.card_id,
                     enter_visually_complete=False,
                 )
-                if selected.success:
+                if selected.success or self.navigator.story_talk_skipped:
                     break
+            if self.navigator.story_talk_skipped:
+                # Its story was never played: the collection skills stay off
+                # until it is (user 2026-11-01: 退出这张卡带, no retry).
+                stopped = self._skip_card(
+                    card,
+                    "进去时在放剧情对话（这张卡的剧情还没推进，采集技能用不了），"
+                    "已跳过对话；先自己把这张卡的剧情玩一段",
+                    completed_this_run,
+                )
+                if stopped is not None:
+                    return stopped
+                continue
             if selected is None or not selected.success:
                 stopped = self._skip_card(
                     card,

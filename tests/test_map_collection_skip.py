@@ -101,6 +101,7 @@ class SkipBrokenCardTest(unittest.TestCase):
                 ),
                 return_home=lambda: events.append(("home",)) or home,
             )
+            self.navigator = navigator
             collector = Collector(task, object(), navigator, progress)
             collector._absorb_used_up = lambda **_kwargs: None
             collector._ensure_search = lambda **_kwargs: None
@@ -144,6 +145,26 @@ class SkipBrokenCardTest(unittest.TestCase):
         # 「停在」 names the skip, not the next card's step.
         stage = [value for key, value in self.infos if key == "当前阶段"][-1]
         self.assertEqual("地图采集：活动卡5跳过，没有完成", stage)
+
+    def test_a_card_opening_on_its_story_talk_is_skipped_once(self):
+        # bd2 session 2026-11-01: 角色卡3 opened on 「代号S莎拉」's talk.
+        selects = []
+
+        def select(card_id, *, enter_visually_complete):
+            selects.append(card_id)
+            if card_id == "Q_cp3":
+                self.navigator.story_talk_skipped = True
+                return ENTERED
+            return ENTERED
+
+        result, events, warnings, _state = self._run(("Q_cp3", "Q_ep7"), select=select)
+
+        self.assertEqual(["Q_cp3", "Q_ep7"], selects)  # no retry
+        self.assertNotIn(("collect", "Q_cp3", "main_area"), events)
+        self.assertIn(("collect", "Q_ep7", "main_area"), events)
+        self.assertIn(("home",), events)
+        self.assertTrue(any("角色卡3进去时在放剧情对话" in line for line in warnings))
+        self.assertIn("剧情还没推进", result.message)
 
     def test_every_missing_card_is_named_once(self):
         result, _events, _warnings, _state = self._run(
