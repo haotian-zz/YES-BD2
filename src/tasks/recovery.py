@@ -301,7 +301,8 @@ def _recover_to_home(task, attempts: int) -> bool:
             continue
         # Back, H and Esc do nothing in a story talk (bd2 session
         # 2026-11-01: 角色卡3's three-minute opening outlasted every attempt).
-        if navigator._skip_story_talk(vision.capture()):
+        skip_talk = getattr(navigator, "_skip_story_talk", None)
+        if callable(skip_talk) and skip_talk(vision.capture()):
             task.log_info("恢复主页：画面在放剧情对话，按跳过。")
             continue
         outcome = _handle_dialog(task, vision)
