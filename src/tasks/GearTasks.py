@@ -570,7 +570,14 @@ class DailyRefineTask(_ClaimTaskBase):
             self._save_flow_diagnostic("daily_refine_no_refine_button")
             return "no_button" if self._close_item_popup(detail) else "failed"
         self._click_box(button, after_sleep=1.5)
-        if not self._wait_for_title("精炼", REFINE_PAGE_TITLE):
+        opened = self._wait_for_title("精炼", REFINE_PAGE_TITLE)
+        if not opened and refine_pill_point(self.capture_frame()) is not None:
+            # bd2 session 2026-11-01: the press hit 精炼 but the popup stayed;
+            # it only opens a page, so it is pressed once more while still up.
+            self.log_info("每日精炼：点了精炼，装备详情还在，再点一次。")
+            self._click_box(button, after_sleep=1.5)
+            opened = self._wait_for_title("精炼", REFINE_PAGE_TITLE)
+        if not opened:
             self._why = "点了精炼后，精炼页没出来"
             return "failed"
         return self._refine_on_page()
