@@ -51,6 +51,7 @@ class _Task:
     def __init__(self):
         self.clicks = []
         self.logs = []
+        self.config = {}
 
     def operate_click(self, x, y, after_sleep=0.0):
         self.clicks.append((x, y))

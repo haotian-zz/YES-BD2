@@ -57,11 +57,13 @@ class EndCloneTest(unittest.TestCase):
 
         psutil = types.SimpleNamespace(
             process_iter=lambda _attrs=None: [_Viewer(steps)],
+            Process=lambda _pid: _Viewer(steps),
             NoSuchProcess=type("NoSuchProcess", (Exception,), {}),
         )
         with (
             mock.patch.dict(sys.modules, {"psutil": psutil}),
             mock.patch.object(clone_desktop, "child_session_id", return_value=CHILD),
+            mock.patch.object(clone_desktop, "pids_named", return_value=[4242]),
             mock.patch.object(clone_desktop, "in_clone", return_value=False),
             mock.patch.object(clone_desktop, "clone_open", side_effect=clone_open),
             mock.patch.object(clone_desktop.subprocess, "run", side_effect=run),

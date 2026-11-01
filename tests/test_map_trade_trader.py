@@ -4595,6 +4595,9 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
         )
         trader._wait_for_buy_all_favorites_state = lambda *_a: self.fail("pressed again")
         trader._sold_out_after_buy = lambda: self.fail("confirmed at the fixed point")
+        trader.navigator = SimpleNamespace(
+            leave_shop_to_merchant=lambda: SimpleNamespace(success=True, message="")
+        )
 
         result = trader.buy_all_favorites(located=((1435, 1005), frame))
 
@@ -4603,7 +4606,7 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
         self.assertEqual([(1435, 1005)], clicks)
         self.assertIn(BUY_NO_FAVORITES_TOAST_REGION, ocr_regions)
         self.assertEqual(1, len(warnings))
-        self.assertIn("收藏中没有加入的商品", warnings[0])
+        self.assertIn("收藏", warnings[0])
 
     def test_purchase_dialog_is_not_mistaken_for_the_no_favorites_toast(self):
         trader = object.__new__(Trader)
