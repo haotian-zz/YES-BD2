@@ -63,6 +63,7 @@ from src.utils.image_utils import (
     stabilize_template_match,
 )
 from src.utils.ocr_utils import keyword_read, normalize_ocr_text
+from src.utils.square_hud import SQUARE_PARTY_OCR_REFERENCE_ROI, square_party_label_read
 from src.utils.wait_limits import (
     STUCK_SECONDS,
     MotionWatch,
@@ -500,7 +501,7 @@ class SquareGoddessTask(BaseBD2Task):
                 still_in_square = self._passes(
                     quick_switch_result,
                     QUICK_SWITCH_TEMPLATE,
-                )
+                ) or self._square_party_label_shown(frame)
                 completed_home_clicks += 1
                 remaining_home_clicks -= 1
                 self.info_set(
@@ -510,7 +511,7 @@ class SquareGoddessTask(BaseBD2Task):
                 if still_in_square:
                     self.log_info(
                         "广场女神像：返回主页点击未生效，"
-                        f"仍识别到快速切换卡带按钮，执行第{completed_home_clicks}次点击。"
+                        f"还在广场，执行第{completed_home_clicks}次点击。"
                     )
                     self.operate_click(*SQUARE_HOME_POINT, after_sleep=1.0)
                 else:
@@ -535,6 +536,13 @@ class SquareGoddessTask(BaseBD2Task):
             f"p95={last_p95:.0f}, ocr={last_gacha_text or '-'}。"
         )
         return False
+
+    def _square_party_label_shown(self, frame) -> bool:
+        """The square's 「创建队伍」 bar under the home button (2026-11-01:
+        the square's bottom quick-switch row is gone, the template read -1
+        and every retry pressed H, which does nothing there)."""
+        text = self._ocr_text(frame, name="广场创建队伍", roi=SQUARE_PARTY_OCR_REFERENCE_ROI)
+        return square_party_label_read(text)
 
     def _wait_for_quick_switch_page(
         self,

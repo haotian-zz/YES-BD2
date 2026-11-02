@@ -332,6 +332,54 @@ class FastRecoveryTest(unittest.TestCase):
         self.assertEqual(1, len(presses))  # the back arrow first
         self.assertEqual(["H"], keys)
 
+    def test_square_presses_its_home_button_not_the_channel_button(self):
+        # bd2 session 2026-11-01: the square's top-left is 「Ch.163」; the
+        # back press opened 选择频道 and recovery went round in it.
+        from src.tasks.map_trade.models import ScreenState
+        from src.utils.square_hud import SQUARE_HOME_RELATIVE_POINT, SQUARE_PARTY_OCR_RELATIVE_ROI
+
+        square = np.full((1080, 1920, 3), 200, np.uint8)
+        state = {"frame": square}
+        clicks, reads = [], []
+
+        def ocr_text(frame, name, relative_roi=None, **_k):
+            reads.append(relative_roi)
+            return "创建队伍" if frame is square else ""
+
+        class FakeNavigator:
+            def __init__(self, task, vision):
+                self.vision = SimpleNamespace(capture=lambda: state["frame"], ocr_text=ocr_text)
+
+            def _home_confirmation_signals(self, frame):
+                return (frame is HOME, 0, 0.0, "")
+
+            def classify(self):
+                return ScreenState.UNKNOWN
+
+            def clear_home_announcement(self, _frame, _clicks=0):
+                return False
+
+        def click(x, y, **_k):
+            clicks.append((x, y))
+            if (x, y) == SQUARE_HOME_RELATIVE_POINT:
+                state["frame"] = HOME
+
+        task = SimpleNamespace(
+            info_set=lambda *a: None,
+            log_info=lambda *a, **k: None,
+            sleep=lambda *_a: None,
+            operate_click=click,
+        )
+        with (
+            mock.patch.object(recovery, "Navigator", FakeNavigator),
+            mock.patch.object(recovery, "Vision", lambda task: None),
+            mock.patch.object(recovery, "_handle_dialog", lambda *_a: "none"),
+            mock.patch.object(recovery, "monotonic", iter(range(0, 1000)).__next__),
+        ):
+            self.assertTrue(recovery.recover_to_home(task))
+        self.assertEqual([SQUARE_HOME_RELATIVE_POINT], clicks)
+        self.assertIn(SQUARE_PARTY_OCR_RELATIVE_ROI, reads)
+
     def test_back_that_moved_a_page_is_pressed_again_before_h(self):
         # Live 2K 2026-10-13: event stage page -> back -> event hub; H there
         # did nothing for ~6 s.  A back that moved gets another back first.

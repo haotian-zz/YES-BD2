@@ -25,6 +25,11 @@ from src.tasks.task_vision_mixin import REFERENCE_HEIGHT, REFERENCE_WIDTH
 from src.utils import field_battle, known_popups
 from src.utils.home_confirmation import HOME_LEFT_COLUMN_REQUIRED_HITS
 from src.utils.ocr_utils import fuzzy_substring_match, normalize_ocr_text
+from src.utils.square_hud import (
+    SQUARE_HOME_RELATIVE_POINT,
+    SQUARE_PARTY_OCR_RELATIVE_ROI,
+    square_party_label_read,
+)
 from src.utils.wait_limits import LOADING_MAX_SECONDS
 
 # Room for the Esc steps after the back arrow and H.
@@ -39,6 +44,8 @@ BACK_HOME_WAIT_SECONDS = 4.5
 # Mean grey difference (on a 1/8 thumbnail) that counts as a new screen.
 FRAME_CHANGE_MIN_DIFF = 8.0
 BACK_BUTTON_POINT = (150 / REFERENCE_WIDTH, 50 / REFERENCE_HEIGHT)
+# Home presses in the square before falling back to back/H/Esc.
+SQUARE_HOME_PRESSES_MAX = 2
 # Loading between pages is black with a faint logo (p99 grey ~40 live);
 # every real page has bright UI text.
 TRANSITION_P99_MAX = 70.0
@@ -255,6 +262,15 @@ def in_game_page(task) -> bool:
     return bool(re.search(r"[一-鿿]{2,}", str(title)))
 
 
+def _square_shown(navigator, frame) -> bool:
+    ocr_text = getattr(navigator.vision, "ocr_text", None)
+    if not callable(ocr_text) or not isinstance(frame, np.ndarray) or frame.ndim != 3:
+        return False
+    return square_party_label_read(
+        ocr_text(frame, "广场创建队伍", relative_roi=SQUARE_PARTY_OCR_RELATIVE_ROI)
+    )
+
+
 def recover_to_home(task, attempts: int = RECOVERY_ATTEMPTS) -> bool:
     """Try to bring the game back to the confirmed home screen.
 
@@ -281,6 +297,7 @@ def _recover_to_home(task, attempts: int) -> bool:
     back_moved = 0
     escape_presses = 0
     escape_stopped = False
+    square_presses = 0
     for attempt in range(1, attempts + 1):
         if _home_now(navigator):
             return True
@@ -338,6 +355,16 @@ def _recover_to_home(task, attempts: int) -> bool:
             # A near-black frame is a page change still loading (leaving the
             # event takes ~8 s at 2K): back presses there landed on home and
             # would open the field map (live 2026-09-29).
+            continue
+        if square_presses < SQUARE_HOME_PRESSES_MAX and _square_shown(navigator, frame):
+            # The square's top-left is its channel button (Ch.163): the back
+            # press opened 选择频道, 取消 closed it, round and round (bd2
+            # session 2026-11-01, 广场女神像).  Its home button is top right.
+            square_presses += 1
+            task.log_info("恢复主页：画面是梦幻广场，点右上角主页。")
+            task.operate_click(*SQUARE_HOME_RELATIVE_POINT, after_sleep=0.5)
+            if _wait_after_back(task, navigator, frame):
+                return True
             continue
         # One unclassified frame may just be an animation over the home
         # screen; the back arrow on home would open the field map instead.

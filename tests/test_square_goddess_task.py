@@ -11,6 +11,7 @@ import numpy as np
 
 from src.tasks.BaseBD2Task import CartridgeSpecialPageResult
 from src.utils.fantasia_square import LIFE_SLOT_POINTS, square_card_point
+from src.utils.square_hud import SQUARE_PARTY_OCR_REFERENCE_ROI
 from src.tasks.map_trade.models import MatchResult, TemplateSpec
 from src.tasks.SquareGoddessTask import (
     GODDESS_NAVIGATION_ABSENT,
@@ -787,6 +788,55 @@ class SquareGoddessEntryTest(unittest.TestCase):
 
         self.assertEqual([], clicks)
         self.assertEqual([("H", {"after_sleep": 1.0})] * 2, keys)
+
+    def test_square_return_home_clicks_again_when_party_bar_shows_square(self):
+        # bd2 session 2026-11-01: the square lost its bottom quick-switch row
+        # (template -1) and H does nothing there; 「创建队伍」 under the home
+        # button still says square, so the home button is pressed again.
+        task = object.__new__(SquareGoddessTask)
+        task.config = {"主页压暗阈值": 185.0}
+        task.info_set = lambda *_args, **_kwargs: None
+        logs = []
+        task.log_info = logs.append
+        task.sleep = lambda *_args, **_kwargs: None
+        task.capture_frame = lambda: np.full((1080, 1920, 3), 255, dtype=np.uint8)
+        reads = []
+
+        def fake_ocr(_frame, name, roi=None, **_kwargs):
+            reads.append((name, roi))
+            return "创建队伍" if name == "广场创建队伍" else ""
+
+        task._ocr_text = fake_ocr
+        task.clear_temporary_home_announcement_if_needed = lambda **_kwargs: False
+        task._match = lambda _frame, _spec: MatchResult(
+            score=-1.0, pixel_score=-1.0, position=(0, 0), size=(64, 60), zncc_score=-1.0
+        )
+        task._passes = lambda *_args, **_kwargs: False
+        clicks = []
+        task.operate_click = lambda *args, **kwargs: clicks.append((args, kwargs))
+        keys = []
+        task.tap_key = lambda key, **kwargs: keys.append(key) or True
+        clock = {"value": 0.0}
+
+        def advance_clock():
+            clock["value"] += 0.1
+            return clock["value"]
+
+        with patch("src.tasks.SquareGoddessTask.monotonic", side_effect=advance_clock):
+            self.assertFalse(
+                SquareGoddessTask._wait_for_cartridge_home(
+                    task,
+                    timeout=0.5,
+                    retry_home_clicks=2,
+                    retry_interval=0.0,
+                    total_home_clicks=3,
+                )
+            )
+
+        self.assertEqual([((*SQUARE_HOME_POINT,), {"after_sleep": 1.0})] * 2, clicks)
+        self.assertEqual([], keys)
+        self.assertIn(("广场创建队伍", SQUARE_PARTY_OCR_REFERENCE_ROI), reads)
+        self.assertTrue(any("还在广场" in message for message in logs))
 
     def test_square_return_home_stops_after_retry_budget_is_exhausted(self):
         task = object.__new__(SquareGoddessTask)
