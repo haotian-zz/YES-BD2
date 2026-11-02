@@ -362,7 +362,7 @@ def _recover_to_home(task, attempts: int) -> bool:
             # session 2026-11-01, 广场女神像).  Its home button is top right.
             square_presses += 1
             task.log_info("恢复主页：画面是梦幻广场，点右上角主页。")
-            task.operate_click(*SQUARE_HOME_RELATIVE_POINT, after_sleep=0.5)
+            task.operate_click(*SQUARE_HOME_RELATIVE_POINT, after_sleep=0.5)  # 不用确认：下面 _wait_after_back 看有没有回主页
             if _wait_after_back(task, navigator, frame):
                 return True
             continue
