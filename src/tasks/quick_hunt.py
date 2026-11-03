@@ -201,6 +201,8 @@ QUICK_HUNT_FREE_SWITCH_SETTLE_SECONDS = 2.0
 # Parts of the quick-hunt dialog / cave list are read for this long after
 # a click before a miss counts (one look failed when they drew late).
 QUICK_HUNT_DIALOG_DRAW_SECONDS = 3.0
+# 「狩猎」 pressed and its dialog still up this long: the press was lost.
+QUICK_HUNT_START_REPRESS_SECONDS = 1.5
 # Words only the open quick-hunt dialog shows in its count row.
 QUICK_HUNT_DIALOG_BUTTONS = re.compile(r"取消|MIN|MAX", re.IGNORECASE)
 QUICK_HUNT_HOME_LAST_WAIT_SECONDS = 6.0
@@ -1359,6 +1361,8 @@ class QuickHuntFeatureMixin:
             seconds = LOADING_MAX_SECONDS
         # The result is itself an overlay this step reads: no popup closing.
         wait = load_wait(monotonic(), seconds, before=scene_at_press(self), popups=False)
+        pressed_at = monotonic()
+        repressed = False
         while True:
             frame = self.capture_frame()
             reward_text = self._quick_hunt_ocr_text(
@@ -1374,12 +1378,30 @@ class QuickHuntFeatureMixin:
                 QUICK_HUNT_DIALOG_ROI,
                 name=f"{stage}-异常",
             )
-            if any(
-                keyword in self._normalize_text(dialog_text)
-                for keyword in ("不足", "无法", "耗尽")
-            ):
+            normalized = self._normalize_text(dialog_text)
+            if any(keyword in normalized for keyword in ("不足", "无法", "耗尽")):
                 self._click_mf_reference(1, 1, after_sleep=0.5)
                 return "depleted"
+            # bd2 会话 2026-11-02: the 狩猎 press was swallowed and the
+            # dialog (取消 / 狩猎 60) just stayed until the stuck watch fired.
+            # The dialog closes once a press counts, so while it is still up
+            # the hunt has not started: press it once more.
+            if (
+                not repressed
+                and "取消" in normalized
+                and "狩猎" in normalized
+                and monotonic() - pressed_at >= QUICK_HUNT_START_REPRESS_SECONDS
+            ):
+                repressed = True
+                if self._quick_hunt_click_ocr(
+                    [r"狩猎"],
+                    QUICK_HUNT_START_ROI,
+                    1.0,
+                    name=f"{stage}-再按开始狩猎",
+                    require_enabled=True,
+                ):
+                    self.log_info(f"快速狩猎：{stage}按了「狩猎」视窗还在，再按一次。")
+                continue
             if wait.over(frame, monotonic(), loading=is_loading_dark(frame)):
                 break
             self.sleep(0.5)
