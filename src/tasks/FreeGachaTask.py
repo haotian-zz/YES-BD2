@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from time import monotonic
 
@@ -628,7 +629,23 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
         # it goes to the 跑完的结算 page's 抽到的 (Leo 2026-10-04).
         self._save_result_picture(section_name)
         self._click_reference(*BACK_BUTTON_REFERENCE_POINT, after_sleep=0.0)
-        return self._wait_for_gacha_page(f"{section_name} 返回抽卡页")
+        if self._wait_for_gacha_page(f"{section_name} 返回抽卡页"):
+            return True
+        # bd2 会话 2026-11-02: the back press right after the ticket popup
+        # closed was swallowed and the drawn results (with the x/100 pity
+        # counter) just stayed.  Going back spends nothing: press it again.
+        if not self._result_page_shown(section_name):
+            return False
+        self.log_info(f"{section_name}：返回没反应，还在抽卡结果页，再按一次返回。")
+        self._click_reference(*BACK_BUTTON_REFERENCE_POINT, after_sleep=0.0)
+        return self._wait_for_gacha_page(f"{section_name} 再次返回抽卡页")
+
+    def _result_page_shown(self, section_name: str) -> bool:
+        """One look: the drawn results with their x/100 pity counter, no pool page."""
+        text = self._ocr_text(self.capture_frame(), name=f"{section_name}_结果页")
+        if self._keyword_match_count(text, GACHA_PAGE_KEYWORDS) or "抽抽乐券" in (text or ""):
+            return False
+        return re.search(r"\d+\s*/\s*100", text or "") is not None
 
     def _save_result_picture(self, section_name: str) -> None:
         try:

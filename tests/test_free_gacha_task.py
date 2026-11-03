@@ -578,6 +578,35 @@ class FreeGachaTaskHelperTest(unittest.TestCase):
         self.assertEqual([(frame, "gacha")], saved)
         self.assertEqual(["服装抽抽乐 返回抽卡页"], waits)
 
+    def _result_task(self, gacha_pages, screen_text):
+        task = object.__new__(FreeGachaTask)
+        task.config = {}
+        task.info_set = lambda *_args, **_kwargs: None
+        task.log_info = lambda *_args, **_kwargs: None
+        task.clicks, task.waits = [], []
+        task._click_skip_until_back_page = lambda _section_name: (True, "付费 免费")
+        task._click_reference = lambda x, y, after_sleep=0: task.clicks.append((x, y))
+        task.sleep = lambda _seconds: None
+        pages = iter(gacha_pages)
+        task._wait_for_gacha_page = lambda name: task.waits.append(name) or next(pages)
+        task.capture_frame = lambda: np.zeros((4, 4, 3), dtype=np.uint8)
+        task._ocr_text = lambda _frame, name: screen_text
+        return task
+
+    def test_swallowed_back_on_the_result_page_is_pressed_again(self):
+        # bd2 会话 2026-11-02: back was swallowed, the drawn results stayed.
+        task = self._result_task([False, True], "4 付费4,000 免费135,916 115 5 14/100")
+        with patch("src.tasks.run_report.save_picture", lambda *_args: None):
+            self.assertTrue(FreeGachaTask._handle_result_until_back(task, "服装抽抽乐"))
+        self.assertEqual([(1420, 326), (105, 51), (105, 51)], task.clicks)
+        self.assertEqual(["服装抽抽乐 返回抽卡页", "服装抽抽乐 再次返回抽卡页"], task.waits)
+
+    def test_no_second_back_when_the_screen_is_not_the_result_page(self):
+        task = self._result_task([False], "抽抽乐券 拥有115个 可免费抽1次的抽抽乐券。 14/100")
+        with patch("src.tasks.run_report.save_picture", lambda *_args: None):
+            self.assertFalse(FreeGachaTask._handle_result_until_back(task, "服装抽抽乐"))
+        self.assertEqual([(1420, 326), (105, 51)], task.clicks)
+
     def test_result_picture_failure_does_not_stop_the_claim(self):
         task = object.__new__(FreeGachaTask)
         task.log_info = lambda *_args, **_kwargs: None
