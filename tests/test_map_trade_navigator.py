@@ -360,7 +360,7 @@ class NavigatorTest(unittest.TestCase):
                 teleport, (1080, 1920, 3), page_mode=MapPageMode.DIRECT_TELEPORT
             )
         )
-        self.assertEqual([(905, 551), (905, 551)], clicks)
+        self.assertEqual([teleport.center, teleport.center], clicks)
         self.assertEqual(1, len(infos))
 
     def test_direct_teleport_that_left_the_page_is_not_pressed_again(self):
@@ -371,7 +371,7 @@ class NavigatorTest(unittest.TestCase):
                 teleport, (1080, 1920, 3), page_mode=MapPageMode.DIRECT_TELEPORT
             )
         )
-        self.assertEqual([(905, 551)], clicks)
+        self.assertEqual([teleport.center], clicks)
         self.assertEqual([], infos)
 
     def test_sandbox_large_map_is_rejected_before_area_controls_are_scanned(self):
