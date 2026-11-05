@@ -333,6 +333,47 @@ class NavigatorTest(unittest.TestCase):
             )
         )
 
+    def _direct_teleport_navigator(self, modes):
+        clicks, infos = [], []
+        navigator = Navigator(
+            SimpleNamespace(info_set=lambda *_args: None, log_info=infos.append, sleep=lambda *_a: None),
+            SimpleNamespace(
+                click_client=lambda center, *_args, **_kwargs: clicks.append(center),
+                capture=lambda: np.zeros((4, 4, 3), dtype=np.uint8),
+            ),
+        )
+        navigator._wait_for_loading_screen = lambda _timeout: True
+        pages = iter(modes)
+        navigator._detect_map_page_mode = lambda _frame: SimpleNamespace(
+            mode=next(pages, MapPageMode.UNKNOWN)
+        )
+        return navigator, clicks, infos
+
+    def test_lost_direct_teleport_press_is_pressed_once_more(self):
+        # bd2 会话 2026-11-04: 禁地矿山's circle was pressed, 移动魔法阵 stayed.
+        navigator, clicks, infos = self._direct_teleport_navigator(
+            [MapPageMode.DIRECT_TELEPORT, MapPageMode.DIRECT_TELEPORT]
+        )
+        teleport = MatchResult(0.99, (905, 551), (40, 40), 0.95, 0.93)
+        self.assertTrue(
+            navigator._click_teleport_map_destination(
+                teleport, (1080, 1920, 3), page_mode=MapPageMode.DIRECT_TELEPORT
+            )
+        )
+        self.assertEqual([(905, 551), (905, 551)], clicks)
+        self.assertEqual(1, len(infos))
+
+    def test_direct_teleport_that_left_the_page_is_not_pressed_again(self):
+        navigator, clicks, infos = self._direct_teleport_navigator([MapPageMode.UNKNOWN])
+        teleport = MatchResult(0.99, (905, 551), (40, 40), 0.95, 0.93)
+        self.assertTrue(
+            navigator._click_teleport_map_destination(
+                teleport, (1080, 1920, 3), page_mode=MapPageMode.DIRECT_TELEPORT
+            )
+        )
+        self.assertEqual([(905, 551)], clicks)
+        self.assertEqual([], infos)
+
     def test_sandbox_large_map_is_rejected_before_area_controls_are_scanned(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         vision = SimpleNamespace(
