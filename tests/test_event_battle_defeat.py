@@ -162,7 +162,7 @@ class DefeatScreenTest(unittest.TestCase):
         # after one tap; the VICTORY page with 返回 came after more.
         result_screen = {"buttons": ["返回"]}
         task, result = self._unknown(
-            [BATTLE] + [{}] * 12 + [result_screen] * 2, leave=lambda: True
+            [BATTLE] + [{}] * 7 + [result_screen] * 2, leave=lambda: True
         )
         self.assertEqual(5, result)
         self.assertEqual([DEFEAT_BLANK_POINT] * 2, task.clicks)
