@@ -150,12 +150,22 @@ class DefeatScreenTest(unittest.TestCase):
             result = task._watch_auto_battle(5, CHALLENGE_MODE)
         return task, result
 
-    def test_unknown_screen_gets_one_blank_tap_then_fails_without_esc(self):
+    def test_unknown_screen_gets_three_blank_taps_then_fails_without_esc(self):
         # Leo 2026-10-14: 8 s, not 30; never end a battle half way.
-        task, result = self._unknown([BATTLE] + [{}] * 50)
+        task, result = self._unknown([BATTLE] + [{}] * 80)
         self.assertIsNone(result)
-        self.assertEqual([DEFEAT_BLANK_POINT], task.clicks)
+        self.assertEqual([DEFEAT_BLANK_POINT] * 3, task.clicks)
         self.assertIn("认不出的画面", task._why)
+
+    def test_picture_before_victory_is_tapped_until_the_result_shows(self):
+        # bd2 会话 2026-11-06: a first clear's costume picture (no text) stayed
+        # after one tap; the VICTORY page with 返回 came after more.
+        result_screen = {"buttons": ["返回"]}
+        task, result = self._unknown(
+            [BATTLE] + [{}] * 12 + [result_screen] * 2, leave=lambda: True
+        )
+        self.assertEqual(5, result)
+        self.assertEqual([DEFEAT_BLANK_POINT] * 2, task.clicks)
 
     def test_battle_text_coming_back_keeps_watching(self):
         # A skill animation hid the battle text for a while: not an end.
