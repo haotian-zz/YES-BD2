@@ -100,6 +100,9 @@ DEFEAT_BLANK_POINT = (960, 140)
 # battle text must not get a pause menu, and the battle is never ended.  The
 # battle text coming back counts as still fighting.
 UNKNOWN_END_SECONDS = 8.0
+# bd2 会话 2026-11-06: a first clear showed a full-screen costume picture
+# with no text before VICTORY, and one blank tap did not take it away.
+UNKNOWN_END_TAPS = 3
 # Leo 2026-10-14 「如果要等待不要再有20幾30秒這種這麼長的時間頂多等8秒10秒」: every
 # wait for a page or a cue is 10 s at most (battles themselves are not waits).
 MAX_WAIT_SECONDS = 10.0
@@ -1212,7 +1215,7 @@ class EventBattleTask(_ClaimTaskBase):
         calm = 0
         defeat_calm = 0
         busy_at = monotonic()  # last frame in battle or on a known screen
-        tapped = False
+        taps = 0
         while monotonic() <= end_at:
             frame = self.capture_frame()
             progress_text = normalize_ocr_text(
@@ -1232,7 +1235,7 @@ class EventBattleTask(_ClaimTaskBase):
                 calm = 0
                 defeat_calm = 0
                 busy_at = monotonic()
-                tapped = False
+                taps = 0
             elif self._defeat_shown(frame):
                 # Two calm frames, as for the win screen.
                 calm = 0
@@ -1255,16 +1258,16 @@ class EventBattleTask(_ClaimTaskBase):
                     return max(seen, 1)
                 if self._auto_battle_shown(frame):
                     busy_at = monotonic()
-                    tapped = False
+                    taps = 0
                 elif monotonic() - busy_at > UNKNOWN_END_SECONDS:
                     # Neither battle nor a result screen it knows.
                     if mode and self._wait_for_stage_page(mode, timeout=0.0, quiet=True):
                         return max(seen, planned)  # the chain came back by itself
-                    if tapped:
+                    if taps >= UNKNOWN_END_TAPS:
                         self._save_flow_diagnostic(f"{self.claim_log_name}_unknown_end")
                         self._failed(
                             f"打完后停在认不出的画面，等了 {UNKNOWN_END_SECONDS:g} 秒、"
-                            "点空白处也没离开"
+                            f"点了 {taps} 次空白处也没离开"
                         )
                         return None
                     self.log_info(
@@ -1273,7 +1276,7 @@ class EventBattleTask(_ClaimTaskBase):
                     self._click_reference(  # 不用确认：接着照常看画面
                         *DEFEAT_BLANK_POINT, after_sleep=1.0
                     )
-                    tapped = True
+                    taps += 1
                     busy_at = monotonic()
             self.sleep(1.5)
         self.log_info("活动每日战斗：自动战斗超时。")
