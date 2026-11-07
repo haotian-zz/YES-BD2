@@ -41,6 +41,7 @@ CHILD_META = {
     "活动每日战斗": ("活动战斗", "zap", "fight"),
     "救赎之塔": ("救赎之塔", "castle", "fight"),
     "亲密度谈心": ("亲密度谈心", "message-circle-heart", "grow"),
+    "格鲁TALK相遇": ("格鲁TALK", "message-circle-more", "grow"),
     "领取任务奖励": ("任务奖励", "list-checks", "claim"),
     "领取通行证": ("通行证", "ticket", "claim"),
     "领取邮件": ("邮件", "mail", "claim"),

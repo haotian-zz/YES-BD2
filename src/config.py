@@ -221,6 +221,7 @@ config = {
         ["src.tasks.DoomBookTask", "DoomBookTask"],
         ["src.tasks.StoryPushTask", "StoryPushTask"],
         ["src.tasks.AffinityTalkTask", "AffinityTalkTask"],
+        ["src.tasks.GluTalkTask", "GluTalkTask"],
         ["src.tasks.recovery", "ReturnHomeTask"],
         ["src.tasks.recovery", "FieldBattleEscapeTestTask"],
         ["src.tasks.BD2InputTestTask", "BD2MouseClickInputTestTask"],

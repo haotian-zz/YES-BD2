@@ -41,6 +41,7 @@ HINTS_KEPT = {
     "AchievementRewardTask": (),
     "ClearPackRewardTask": (),
     "TalentStarUpTask": (),
+    "GluTalkTask": (),
 }
 
 

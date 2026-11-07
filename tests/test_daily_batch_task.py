@@ -104,6 +104,7 @@ class DailyBatchTaskTest(unittest.TestCase):
             # Leo 2026-10-21: 恶魔城 救赎之塔 快速战斗.
             "救赎之塔",
             "亲密度谈心",
+            "格鲁TALK相遇",
             # Leo 2026-10-09: the 周常 run in 一键日常, skipped once done this week.
             "浏览街机菜单",
             "小屋增加人气",

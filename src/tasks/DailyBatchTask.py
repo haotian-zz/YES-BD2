@@ -18,6 +18,7 @@ from src.tasks.DoomBookTask import DoomBookTask
 from src.tasks.EventBattleTask import EventBattleTask
 from src.tasks.EventRewardTask import EventRewardTask
 from src.tasks.FreeGachaTask import FreeGachaTask
+from src.tasks.GluTalkTask import GluTalkTask
 from src.tasks.GearTasks import DailyRefineTask
 from src.tasks.JunkGearTask import AFTER_GACHA_KEY, JunkGearTask
 from src.tasks.map_trade.phase_ledger import ONLY_INCOMPLETE_KEY
@@ -163,6 +164,9 @@ DAILY_BATCH_CHILDREN = (
     DailyBatchChild("救赎之塔", RedemptionTowerTask),
     # Leo 2026-10-21: LV20 costumes talked up to 15/15, three talks a day below.
     DailyBatchChild("亲密度谈心", AffinityTalkTask),
+    # User 2026-11-06: the 3 free 格鲁TALK encounters, people below Lv10, the
+    # highest first (50 钻石 a level).
+    DailyBatchChild("格鲁TALK相遇", GluTalkTask),
     # 周常 run with the daily ones and are skipped once done this week (Leo
     # 2026-10-09, YES-BD2 issue #1: no separate 一键完成周常).  Before the
     # rewards, so the weekly missions they finish are claimed in the same run.
