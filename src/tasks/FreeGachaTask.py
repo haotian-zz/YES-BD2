@@ -22,6 +22,8 @@ FREE_ENTRY_RETRY_CHANGED = "changed"
 
 # 以下点击点均为 1920×1080 参考（_click_reference 按当前客户区归一）。
 GACHA_ENTRY_REFERENCE_POINT = (162, 986)
+# Presses after the first while 主页 stays up with no loading (swallowed).
+GACHA_ENTRY_EXTRA_PRESSES = 2
 EQUIPMENT_TAB_REFERENCE_POINT = (175, 432)
 BACK_BUTTON_REFERENCE_POINT = (105, 51)
 FREE_GACHA_BUTTON_REFERENCE_POINT = (347, 973)
@@ -140,11 +142,14 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
         self._click_reference(*GACHA_ENTRY_REFERENCE_POINT, after_sleep=0.5)
         loading_state, gacha_found, _ = self._wait_loading_or_gacha_page("进入抽卡页")
         # A swallowed press leaves the full home screen up with no loading:
-        # press the entry once more (bd2 session run 2026-10-22 waited 50 s
-        # on the unchanged home page and failed).
-        if loading_state == "none" and self._home_confirmation_ok(
-            self.capture_frame(), "抽抽乐入口点击后"
-        ):
+        # press the entry again (bd2 session run 2026-10-22 waited 50 s on the
+        # unchanged home page and failed; 2026-11-06 17:17 both presses were
+        # swallowed, so up to two more).
+        for _extra in range(GACHA_ENTRY_EXTRA_PRESSES):
+            if loading_state != "none" or not self._home_confirmation_ok(
+                self.capture_frame(), "抽抽乐入口点击后"
+            ):
+                break
             self.log_info("白嫖抽抽乐：点了抽抽乐入口后还在主页，再点一次。")
             self._click_reference(*GACHA_ENTRY_REFERENCE_POINT, after_sleep=0.5)  # 不用确认：the gacha page is waited for below
             loading_state, gacha_found, _ = self._wait_loading_or_gacha_page("进入抽卡页")
@@ -645,6 +650,7 @@ class FreeGachaTask(TaskVisionMixin, BaseBD2Task):
         text = self._ocr_text(self.capture_frame(), name=f"{section_name}_结果页")
         if self._keyword_match_count(text, GACHA_PAGE_KEYWORDS) or "抽抽乐券" in (text or ""):
             return False
+        # 不是次数：只看结果页有没有「x/100」保底计数这个字样，不读里面的数
         return re.search(r"\d+\s*/\s*100", text or "") is not None
 
     def _save_result_picture(self, section_name: str) -> None:
