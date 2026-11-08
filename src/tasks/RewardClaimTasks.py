@@ -478,7 +478,7 @@ class ClearPackRewardTask(_ClaimTaskBase):
             opened.add(key)
             self.info_set("当前阶段", f"通关礼包：{key}")
             self._click_reference(SHOP_PACK_X, badge_y + SHOP_PACK_BADGE_TO_CENTER, after_sleep=2.0)  # 不用确认：接着等「免费」
-            claimed += self._press_free_buttons(key)
+            claimed += self._press_free_buttons(key)  # 不用确认：里面每按一次「免费」都重读它还在不在
         return claimed
 
     def _pack_caption(self, frame, badge_y: int) -> str:

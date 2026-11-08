@@ -91,6 +91,8 @@ class WalkLoopLostStageTest(unittest.TestCase):
 
         task.hold_key = hold_key
         task._nudge_until_pre_battle = lambda: True
+        # No 阵形设置 behind a loading frame once the stage is gone for good.
+        task._pre_battle_after_loading = lambda: False
         task.resets = 0
 
         def reset():

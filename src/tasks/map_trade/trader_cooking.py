@@ -671,7 +671,7 @@ class CookingFlowMixin:
             self.task.log_info(f"料理：练料理技能，{name} 制作按钮不可用，这次不练。")
             return self._return_from_detail_to_list(name)
         for _press in range(count // COOKING_QUANTITY_STEP):
-            self._press_plus_ten(name)
+            self._press_plus_ten(name)  # 不用确认：下面等详情页可制作再开始
         ready = self._wait_for_cooking_detail(name, COOKING_QUANTITY_VERIFY_SECONDS)
         if ready is None or not ready.enabled:
             self.task.log_warning(f"料理：练料理技能，{name} 选好数量后没回到可制作的详情页。")
@@ -680,7 +680,7 @@ class CookingFlowMixin:
         self.task.log_info(f"料理：选中的料理都做不了，先做 {name} 约 {max(1, count)} 份练料理技能。")
         self._owned_before = ready.owned
         self.vision.click_client(ready.start_match.center, ready.frame.shape, after_sleep=0.0)  # 不用确认：下面等制作按钮变灰
-        if not self._wait_for_cooking_started(name, COOKING_START_TIMEOUT):
+        if not self._wait_for_cooking_started(name, COOKING_START_TIMEOUT):  # 有备案：按钮变灰、持有数量变多两种都看，按钮还亮会补点一次
             self.task.log_warning(f"料理：{name} 点击后未确认制作按钮变灰。")
             self._recover_cooking_list()
             return False
@@ -709,7 +709,7 @@ class CookingFlowMixin:
         boxes = [
             box
             for box in self.vision.ocr_boxes(
-                frame, "料理详情-练习料理名", relative_roi=COOKING_DETAIL_NAME_ROI, target_height=900
+                frame, "料理详情-练习料理名", relative_roi=COOKING_DETAIL_NAME_ROI, target_height=ocr_size.READ_HEIGHT
             )
             if _dish_name(self.vision.simplify(str(getattr(box, "name", ""))))
             and getattr(box, "y", None) is not None
@@ -731,7 +731,7 @@ class CookingFlowMixin:
                     detail.frame,
                     f"料理-{name}数量选项",
                     relative_roi=COOKING_QUANTITY_CHOICES_ROI,
-                    target_height=900,
+                    target_height=ocr_size.READ_HEIGHT,
                 )
                 if normalize_text(self.vision.simplify(str(getattr(box, "name", "")))) == "10"
                 and getattr(box, "x", None) is not None

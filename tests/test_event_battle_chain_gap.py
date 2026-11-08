@@ -13,7 +13,7 @@ import unittest
 from unittest import mock
 
 from src.tasks import EventBattleTask as event_module
-from src.tasks.EventBattleTask import CHALLENGE_MODE, DEFEAT_BLANK_POINT
+from src.tasks.EventBattleTask import CHALLENGE_MODE, DEFEAT_BLANK_POINT, UNKNOWN_END_TAPS
 from tests.test_event_battle_defeat import BATTLE, ScreenTask, box
 
 BATTLE_4 = {"progress": ["自动战斗进行中：第4次／共5次"], "buttons": ["结束自动战斗"]}
@@ -81,13 +81,15 @@ class ChainGapTest(unittest.TestCase):
     def test_still_unknown_screen_between_battles_is_still_caught(self):
         task, result = _watch([BATTLE] + [GAP] * 60, moving=False)
         self.assertIsNone(result)
-        self.assertEqual([DEFEAT_BLANK_POINT], task.clicks)
+        # Blank taps only, as many as an unknown end gets (bd2 会话 2026-11-06).
+        self.assertEqual([DEFEAT_BLANK_POINT] * UNKNOWN_END_TAPS, task.clicks)
         self.assertIn("认不出的画面", task._why)
 
     def test_a_gap_that_keeps_moving_ends_at_the_loading_cap(self):
         task, result = _watch([BATTLE] + [GAP] * 200, moving=True)
         self.assertIsNone(result)
-        self.assertEqual([DEFEAT_BLANK_POINT], task.clicks)
+        # Blank taps only, as many as an unknown end gets (bd2 会话 2026-11-06).
+        self.assertEqual([DEFEAT_BLANK_POINT] * UNKNOWN_END_TAPS, task.clicks)
         self.assertIn("认不出的画面", task._why)
 
     def test_slow_pan_and_mvp_after_the_last_battle_reach_the_result(self):
@@ -103,13 +105,15 @@ class ChainGapTest(unittest.TestCase):
     def test_still_unknown_screen_after_the_last_battle_is_still_caught(self):
         task, result = _watch([LAST_BATTLE] + [GAP] * 60, moving=False)
         self.assertIsNone(result)
-        self.assertEqual([DEFEAT_BLANK_POINT], task.clicks)
+        # Blank taps only, as many as an unknown end gets (bd2 会话 2026-11-06).
+        self.assertEqual([DEFEAT_BLANK_POINT] * UNKNOWN_END_TAPS, task.clicks)
         self.assertIn("认不出的画面", task._why)
 
     def test_a_moving_screen_after_the_last_battle_ends_at_the_loading_cap(self):
         task, result = _watch([LAST_BATTLE] + [GAP] * 200, moving=True)
         self.assertIsNone(result)
-        self.assertEqual([DEFEAT_BLANK_POINT], task.clicks)
+        # Blank taps only, as many as an unknown end gets (bd2 会话 2026-11-06).
+        self.assertEqual([DEFEAT_BLANK_POINT] * UNKNOWN_END_TAPS, task.clicks)
 
 
 if __name__ == "__main__":

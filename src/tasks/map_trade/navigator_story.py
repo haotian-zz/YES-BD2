@@ -2343,7 +2343,7 @@ class StoryCardNavigationMixin:
             if frame.shape[:2] == (1080, 1920)
             else cv2.resize(frame, (1920, 1080), interpolation=cv2.INTER_AREA)
         )
-        if not story_push.talk_shown(frame_1080):
+        if not story_push.talk_shown(frame_1080):  # 有备案：只是看有没有剧情对话，没有就照常往下走
             return False
         self.story_talk_skipped = True
         # story_push points are 1920x1080; click_client takes frame pixels

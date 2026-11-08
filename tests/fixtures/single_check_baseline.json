@@ -20,7 +20,7 @@
   "src/tasks/fiend_hunt/screen.py": 1,
   "src/tasks/map_trade/navigator_sandbox.py": 2,
   "src/tasks/map_trade/navigator_story.py": 1,
-  "src/tasks/map_trade/trader_cartridge.py": 5,
+  "src/tasks/map_trade/trader_cartridge.py": 3,
   "src/tasks/map_trade/trader_cooking.py": 1,
   "src/tasks/map_trade/trader_sell.py": 5,
   "src/tasks/trigger/AutoLoginTask.py": 3

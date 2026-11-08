@@ -170,7 +170,7 @@ class GluTalkTask(_ClaimTaskBase):
 
     def _open_window(self) -> bool:
         for attempt in range(1, OPEN_ATTEMPTS + 1):
-            if not self._wait_for_home_confirmation(f"{LABEL}入口前主页确认", timeout=3.0):
+            if not self._wait_for_home_confirmation(f"{LABEL}入口前主页确认", timeout=3.0):  # 有备案：不在主页先通用回主页，回不去才放弃
                 self.log_info(f"{LABEL}：不在主页，先回主页。")
                 if not recover_to_home(self):
                     self._note_why("不在主页，也没能回到主页，所以没点格鲁TALK")
@@ -407,7 +407,7 @@ class GluTalkTask(_ClaimTaskBase):
         self.log_info(f"{LABEL}：和{row.name}（{row.level}级）开始相遇事件。")
         # The window stays up a moment before the scene loads: it showing
         # right after 确认 is not the scene being over.
-        if not wait_for(lambda: not self._window_open(), 10.0, sleep=self.sleep):
+        if not wait_for(lambda: not self._window_open(), 10.0, sleep=self.sleep):  # 有备案：确认已按到确认框消失（会补按）；只记这个人没做成，换下一个人
             self.log_info(f"{LABEL}：按了确认，格鲁TALK视窗一直在，没进相遇剧情。")
             return "按了确认没进相遇剧情"
         if not self._skip_scene(row):

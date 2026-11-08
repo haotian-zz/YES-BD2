@@ -2304,10 +2304,11 @@ class SandboxNavigationMixin:
         )
         # bd2 会话 2026-11-02/04 (卢戈森林深处, 禁地矿山): the press was lost
         # and 移动魔法阵 stayed open; its dark backdrop even passed for the
-        # loading screen, so the page itself is looked at, not only the
-        # loading screen (Leo 2026-11-02 「說了10次以上」 too).  A teleport
-        # spends nothing: press it once more.
-        if self._direct_teleport_page_still_open():
+        # loading screen, so the page itself is looked at first.  Not read:
+        # no loading screen seen means the press was dropped (Leo 2026-11-02
+        # 「說了10次以上」).  A teleport spends nothing: press it once more.
+        still_open = self._direct_teleport_page_still_open()
+        if still_open or (still_open is None and not self._teleport_loading_seen):
             self._status("传送阵地图传送阵", "点了没开始传送，传送页还开着，再点一次")
             self.task.log_info("跑图：点了传送页上的传送阵，传送页还开着，再点一次。")
             self.vision.click_client(teleport.center, frame_shape, after_sleep=0.0)  # 不用确认：只补这一次
@@ -2320,14 +2321,16 @@ class SandboxNavigationMixin:
         )
         return True
 
-    def _direct_teleport_page_still_open(self) -> bool:
+    def _direct_teleport_page_still_open(self) -> bool | None:
+        """The 移动魔法阵 page still up; None when the screen was not read."""
         try:
             frame = self.vision.capture()
+            mode = self._detect_map_page_mode(frame).mode
         except (TaskDisabledException, FinishedException):
             raise
         except Exception:
-            return False
-        return self._detect_map_page_mode(frame).mode == MapPageMode.DIRECT_TELEPORT
+            return None
+        return mode == MapPageMode.DIRECT_TELEPORT
 
     @staticmethod
     def _black_frame(frame) -> bool:

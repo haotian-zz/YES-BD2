@@ -317,7 +317,7 @@ def preset_use_point(boxes, number: int = 1) -> tuple[int, int] | None:
 
 
 def preset_confirm_point(boxes) -> tuple[int, int] | None:
-    if _find(boxes, PRESET_CONFIRM_TITLES) is None:
+    if _find(boxes, PRESET_CONFIRM_TITLES) is None:  # 有备案：只是认画面，不是这一步的结果；调用方会循环多看几轮
         return None
     confirm = _find(boxes, CONFIRM_TEXTS)
     if confirm is None:

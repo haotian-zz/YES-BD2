@@ -725,7 +725,7 @@ class ShopCartridgeNavigationMixin:
                     self._status(f"{shop_id} 空收藏#{slot}", "已是灰星")
                     continue
                 self._status(f"{shop_id} 空收藏#{slot}", "点击取消收藏")
-                if not self._press_star(slot, point, "yellow", self._wait_for_gray_star):
+                if not self._press_star(slot, point, "yellow", self._wait_for_gray_star):  # 不用确认：_press_star 自己等星标变色，没变再点
                     self.task.log_warning(
                         f"买：{reference.label} #{slot} 点击后未确认灰星或移除提示。"
                     )
@@ -736,7 +736,7 @@ class ShopCartridgeNavigationMixin:
                 self._status(f"{shop_id} 收藏#{slot}", "已是黄星")
                 continue
             self._status(f"{shop_id} 收藏#{slot}", "点击加入收藏")
-            if not self._press_star(slot, point, "gray", self._wait_for_yellow_star):
+            if not self._press_star(slot, point, "gray", self._wait_for_yellow_star):  # 不用确认：_press_star 自己等星标变色，没变再点
                 self.task.log_warning(
                     f"买：{reference.label} #{slot} 点击后未确认黄星或加入提示。"
                 )

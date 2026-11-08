@@ -2815,6 +2815,7 @@ class PVPTaskHelperTest(unittest.TestCase):
         task.sleep = lambda _seconds: None
         task._pre_battle_visible = lambda: False
         task._stage_in_view = lambda: None
+        task._press_stage_reset = lambda _why: False  # 定位修正 found nothing
         waits = []
         task._wait_for_ocr_patterns = lambda *_args, **kwargs: waits.append(kwargs["timeout"]) or (loaded, "")
         return PVPTask._walk_onto_stage(task), waits

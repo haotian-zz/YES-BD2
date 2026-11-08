@@ -23,7 +23,7 @@
     "src/tasks/map_trade/navigator_story.py": 10,
     "src/tasks/map_trade/navigator_trade.py": 22,
     "src/tasks/map_trade/trader_buy.py": 3,
-    "src/tasks/map_trade/trader_cartridge.py": 3,
+    "src/tasks/map_trade/trader_cartridge.py": 1,
     "src/tasks/map_trade/trader_cooking.py": 11,
     "src/tasks/map_trade/trader_price_list.py": 1,
     "src/tasks/map_trade/trader_sell.py": 7,

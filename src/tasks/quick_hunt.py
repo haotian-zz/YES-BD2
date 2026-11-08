@@ -1380,10 +1380,8 @@ class QuickHuntFeatureMixin:
                 QUICK_HUNT_DIALOG_ROI,
                 name=f"{stage}-异常",
             )
-            if any(
-                keyword in self._normalize_text(dialog_text)
-                for keyword in ("不足", "无法", "耗尽")
-            ):
+            normalized = self._normalize_text(dialog_text)
+            if any(keyword in normalized for keyword in ("不足", "无法", "耗尽")):
                 self._click_mf_reference(1, 1, after_sleep=0.5)  # 不用确认：资源用完就结束，提示留给回主页关
                 return "depleted"
             # bd2 会话 2026-11-02: the 狩猎 press was swallowed and the

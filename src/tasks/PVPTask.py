@@ -506,7 +506,7 @@ class PVPTask(BaseBD2Task):
             if start_state == "season_ended":
                 self.info_set("状态", "赛季已结束，今天没有可打的。")
                 self.log_completion("镜中之战：赛季已结束，自动战斗不可用，跳过，等下个赛季。")
-                self._click_reference(*PVP_STAGE_BACK_REFERENCE_POINT, after_sleep=1.0)
+                self._click_reference(*PVP_STAGE_BACK_REFERENCE_POINT, after_sleep=1.0)  # 不用确认：下一行 _ensure_pvp_hub_after_leave 确认回到大厅
                 self._ensure_pvp_hub_after_leave()
                 return self._return_home_from_pvp_hub()
             if start_state in ("ap_depleted", "ap_shortage"):

@@ -24,6 +24,7 @@ from src.tasks.EventBattleTask import (
     NORMAL_ONLY_KEY,
     PROGRESS_ROI,
     RESULT_BUTTONS_ROI,
+    UNKNOWN_END_TAPS,
     EventBattleTask,
 )
 
@@ -165,7 +166,10 @@ class DefeatScreenTest(unittest.TestCase):
             [BATTLE] + [{}] * 7 + [result_screen] * 2, leave=lambda: True
         )
         self.assertEqual(5, result)
-        self.assertEqual([DEFEAT_BLANK_POINT] * 2, task.clicks)
+        # More than the one tap that failed before, never more than allowed.
+        self.assertGreaterEqual(len(task.clicks), 2)
+        self.assertLessEqual(len(task.clicks), UNKNOWN_END_TAPS)
+        self.assertEqual({DEFEAT_BLANK_POINT}, set(task.clicks))
 
     def test_battle_text_coming_back_keeps_watching(self):
         # A skill animation hid the battle text for a while: not an end.

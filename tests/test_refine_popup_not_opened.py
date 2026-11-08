@@ -141,9 +141,6 @@ class PopupNotOpenedTest(unittest.TestCase):
         self.assertIn("装备详情都没打开", fails[0][1])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 POPUP_READ = [SimpleNamespace(name="基本能力", x=500, y=500, width=80, height=20),
               SimpleNamespace(name="精炼", x=1330, y=720, width=60, height=30)]
@@ -151,11 +148,11 @@ POPUP_READ = [SimpleNamespace(name="基本能力", x=500, y=500, width=80, heigh
 
 class RefinePressSwallowedTest(unittest.TestCase):
     """bd2 session 2026-11-01: 精炼 pressed at the right spot (1361,733), the
-    popup stayed and the run gave up with 「点了精炼后，精炼页没出来」."""
+    popup stayed and the run gave up with 「点了精炼后，精炼页没出来」.
+    The detail buttons are read again; 精炼 still there is pressed once more."""
 
-    def _task(self, frame, titles):
-        task = _task([POPUP_READ])
-        task.capture_frame = lambda: frame
+    def _task(self, again, titles):
+        task = _task([POPUP_READ, again])
         task._click_box = lambda *_a, **_k: task.presses.append("精炼")
         titles = iter(titles)
         task._wait_for_title = lambda *_a, **_k: next(titles)
@@ -163,13 +160,16 @@ class RefinePressSwallowedTest(unittest.TestCase):
         return task
 
     def test_pressed_again_while_the_popup_is_still_up(self):
-        self.assertIsNotNone(refine_pill_point(whole_popup()))
-        task = self._task(whole_popup(), [False, True])
+        task = self._task(POPUP_READ, [False, True])
         self.assertEqual("refined", task._refine_cell(0, 4))
         self.assertEqual(["精炼", "精炼"], task.presses[-2:])
 
     def test_not_pressed_again_once_the_popup_is_gone(self):
-        task = self._task(np.zeros((1080, 1920, 3), np.uint8), [False])
+        task = self._task([], [False])
         self.assertEqual("failed", task._refine_cell(0, 4))
         self.assertEqual(1, task.presses.count("精炼"))
         self.assertIn("精炼页没出来", task._why)
+
+
+if __name__ == "__main__":
+    unittest.main()
