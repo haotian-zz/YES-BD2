@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
 
 import numpy as np
@@ -57,6 +59,15 @@ MERCHANT_MENU_REPRESSES = 3
 CLASSIFY_LOADING_REFERENCE_ROI = (0, 0, 700, 150)
 CLASSIFY_LOADING_RELATIVE_ROI = reference_rect_to_relative_roi(
     CLASSIFY_LOADING_REFERENCE_ROI,
+    FHD_1080,
+)
+# The other loading screen: all black, only 「NOW / LOADING」 in white in the
+# bottom-right corner (4K PC clone 1080p 2026-11-05: words at x 1590-1728,
+# y 929-1026; no BROWN DUST logo, so it read as unknown).  Over 272 saved
+# frames 「loading」 was read here on that screen only.
+CLASSIFY_NOW_LOADING_REFERENCE_ROI = (1400, 860, 520, 220)
+CLASSIFY_NOW_LOADING_RELATIVE_ROI = reference_rect_to_relative_roi(
+    CLASSIFY_NOW_LOADING_REFERENCE_ROI,
     FHD_1080,
 )
 # 商店页签（购买/出售）位于左上，标题/仓库/严加管理位于中部标题牌。
@@ -123,6 +134,23 @@ EVENT_CATEGORY_HIGHLIGHT_REGION = (
 EVENT_CARD_SCAN_SECONDS = 3.0
 QUICK_SWITCH_CARTRIDGE_REGION = (0.0, 908 / FHD_1080.height, 1.0, 1.0)
 QUICK_SWITCH_SCROLL_FOCUS_POINT = (43 / FHD_1080.width, 974 / FHD_1080.height)
+# 「查看战场奖励」 switch at the quick bar's right end.  Off, the cards show no
+# 吸取/压制 badges under them, so no card can be confirmed done (player
+# v0.2.31 2560x1440 2026-11-05: switch off, 活动卡3/7 「未同时确认吸取与压制
+# 完成」; every frame of Leo's and the other fixtures has it on).  Box around
+# the switch (1080p: track 1730-1790, knob 1760 +- 15) and its middle.
+BATTLE_REWARDS_SWITCH_REGION = (
+    1722 / FHD_1080.width,
+    856 / FHD_1080.height,
+    1798 / FHD_1080.width,
+    898 / FHD_1080.height,
+)
+BATTLE_REWARDS_SWITCH_POINT = (1760 / FHD_1080.width, 877 / FHD_1080.height)
+# Yellow share of the region: 0.32-0.35 on (all fixtures), 0.00 off.
+BATTLE_REWARDS_SWITCH_ON_YELLOW = 0.15
+BATTLE_REWARDS_SWITCH_OFF_YELLOW = 0.05
+BATTLE_REWARDS_SWITCH_PRESSES = 2
+BATTLE_REWARDS_SWITCH_AFTER_SLEEP = 0.8
 # Top-left back arrow of the quick bar / card collection page.
 QUICK_SWITCH_BACK_RELATIVE_POINT = (172 / FHD_1080.width, 50 / FHD_1080.height)
 QUICK_SWITCH_SCROLL_POINT = QUICK_SWITCH_SCROLL_FOCUS_POINT
@@ -368,6 +396,13 @@ CHAPTER_HOME_TEMPLATES = (
     ),
 )
 HOME_DIMMED_P95_THRESHOLD = 185.0
+# A popup over a page dims the whole page, its white top bar too (back
+# button, title, currency).  Screen library 2026-11-05, grey p99 of the top
+# 6 % of the frame: shop / teleport map / field map / collection pages 215-255,
+# the quick-switch bar 186-251; with a popup over them (price list, discount
+# shop closed, auto-move, collection event) 43-132.
+PAGE_COVERED_TOP_P99 = 170.0
+PAGE_COVERED_TOP_BAR = (0.0, 0.0, 1.0, 0.06)
 STORY_SANDBOX_STABLE_HITS = 2
 STORY_SANDBOX_SWITCH_WINDOW = 5
 STORY_SANDBOX_SWITCH_WINDOW_HITS = 3
@@ -434,6 +469,8 @@ FIELD_EXTRA_KEYCAP_TEMPLATES = (
     ),
 )
 FIELD_ALL_KEYCAP_TEMPLATES = FIELD_KEYCAP_TEMPLATES + FIELD_EXTRA_KEYCAP_TEMPLATES
+FIELD_KEYCAP_H_NAME = "箱庭按键H"
+SANDBOX_MINIMAP_TEMPLATE_NAME = SANDBOX_TEMPLATES[0].name
 # How many of the four caps prove the field (C and H both, as before, or
 # any two once M / Q join).
 FIELD_KEYCAP_MIN_PASSES = 2
@@ -520,7 +557,10 @@ SANDBOX_SKILL_STATE_TEMPLATES = (
     SANDBOX_SKILL_SLOT_2_SELECTED_TEMPLATE,
     SANDBOX_SKILL_SLOT_1_UNSELECTED_TEMPLATE,
 )
-LOADING_TEMPLATE = TemplateSpec("加载页面", "image/UI_loading_black.png", 0.70)
+# The BROWN DUST logo of the loading screen comes in two sizes: the larger
+# one is 1.2x as wide (258 vs 215 px at 1080p; 4K PC 1080p clone 2026-11-05,
+# two of three live loading frames were not recognised before).
+LOADING_TEMPLATE = TemplateSpec("加载页面", "image/UI_loading_black.png", 0.70, scale_ratios=(1.0, 1.2))
 # 商人交互菜单：右侧对话/商店选项与左下天赋技能卡（1920×1080 参考像素，
 # 实机截图标定）。
 TRADE_MERCHANT_OPTIONS_REFERENCE_ROI = (860, 370, 210, 100)
@@ -676,9 +716,24 @@ SANDBOX_NAVIGATION_OPEN_TEMPLATES = (
     SANDBOX_NAVIGATION_PIN_TEMPLATE,
     SANDBOX_NAVIGATION_RUN_TEMPLATE,
 )
-SANDBOX_NAVIGATION_PAGE_KEYWORDS = ("在战场中查看", "探索", "世界地图")
+# Each footer word with the 繁中 client's own word for the same button: 繁中
+# 「在場域中查看 任務·0 世界地圖」 (2K clone 2026-11-03, the table turns 場域 into
+# 战场) left the area map unconfirmed and 第14章 was skipped.
+SANDBOX_NAVIGATION_PAGE_KEYWORDS = (("在战场中查看",), ("探索", "任务"), ("世界地图",))
 # The area map's title starts with the map's kind: 「战斗 …」 or 「安全 …」.
 AREA_MAP_HEADER_TAGS = ("战斗", "安全")
+# A battle area's title ends 「出现暗属性怪物」 and the like.  An FPS overlay in
+# the corner can hide the 战斗 tag itself (YES-BD2 #69's overlay laid over the
+# 第9章 hunting ground read 「44º 起4 守山人休息处 出现暗属性怪物」).
+AREA_MAP_HEADER_MONSTER_HINT = "属性怪物"
+
+
+def area_map_header_named(normalized_header: str) -> bool:
+    """The area map's 「战斗 …」/「安全 …」 title, or a battle area's
+    「出现…属性怪物」 when its tag is hidden, in a normalized header read."""
+    return AREA_MAP_HEADER_MONSTER_HINT in normalized_header or any(
+        tag in normalized_header for tag in AREA_MAP_HEADER_TAGS
+    )
 SANDBOX_TELEPORT_SKILL_FAILURE_GROUPS = (
     ("无法在", "魔法阵附近"),
     ("无法在", "该地点"),
@@ -920,6 +975,26 @@ SANDBOX_LARGE_MAP_FOOTER_OCR_RELATIVE_ROI = (
     1850 / FHD_1080.width,
     1070 / FHD_1080.height,
 )
+# How close the top-left read must be to 移动魔法阵 (0..1).  A player's FPS
+# overlay (RivaTuner/Afterburner 「GPU / CPU / D3D11 120 FPS」 in the corner)
+# put its orange 「24%」 over 移, the title read 「44 24动魔法阵 PS」 and every
+# teleport map counted as an unknown page (YES-BD2 #69, v0.2.29 1080p).
+# 4 of the 5 characters (0.89) pass; 生成魔法阵 (0.6) does not.  The header
+# icon and the arrows or page label below still have to agree.
+TELEPORT_MAP_HEADER_MIN_RATIO = 0.8
+
+
+def teleport_map_header_read(normalized_header: str) -> bool:
+    """The teleport map's 移动魔法阵 title in an already-normalized read,
+    also when something drawn over the corner hides one character."""
+    from src.tasks.map_trade.vision import normalize_text
+    from src.utils.ocr_utils import fuzzy_substring_match
+
+    return fuzzy_substring_match(
+        normalized_header, normalize_text("移动魔法阵"), TELEPORT_MAP_HEADER_MIN_RATIO
+    )
+
+
 TELEPORT_MAP_DIRECT_HEADER_TEMPLATE = TemplateSpec(
     "交互直传页图标",
     "TeleportMapDirectHeader.png",
@@ -1065,6 +1140,19 @@ TELEPORT_MAP_SEEK_LIMIT = 12
 # when no map is named cleanly: one wrong character in four is 0.75, the
 # town's inn 拉勒凯旅馆 against 拉勒凯镇 is 0.67 (Leo 2026-10-31).
 LOOSE_PAGE_NAME_MIN_RATIO = 0.75
+# The area map's title row: 「安全 <name> 普通」 / 「战斗Ⅰ <name> 出现暗属性怪物」
+# (2K logs 09-29..10-22); the tail after the name is cut before a close read.
+AREA_MAP_HEADER_TAIL = re.compile(r"(普通|困难|良好|出现.{0,4}怪物).*$")
+# Looks at the area map before a position counts as unknown: an unclear read
+# closes the map and opens it once more (remedy 6, bug-prevention.md).
+POSITION_MAP_LOOKS = 2
+# The 安全/战斗 tag and its Ⅰ/Ⅱ numeral (read as 1-7 or I) before a map name.
+MAP_NAME_TAG_PREFIX = re.compile(r"^(安全|战斗)?[ⅠⅡⅢⅣⅤⅥⅦⅰⅱⅲiIＩ1-7]*")
+# Characters that tell one map from its neighbour of the same name: floors
+# and numbers (学校1楼/3楼, 第一/第四记忆空间), sides (左侧/右侧回廊).  A loose
+# read that differs from a map's name in these is another map (player
+# v0.2.29 2026-11-04: 「安全 学校3楼」 taken for 学校1楼).
+MAP_NAME_TELLING_CHARS = frozenset("0123456789〇零一二三四五六七八九十左右中前后上下东西南北内外")
 # An unresolved page read this close to one of the card's maps (or empty)
 # is read again bordered and enlarged at these scales before it counts as
 # another page; a clean read of an unrelated page is not.

@@ -31,6 +31,7 @@ from src.utils.image_utils import (
     crop_relative,
 )
 from src.utils.ocr_utils import normalize_ocr_text
+from src.utils import ocr_size
 
 REFERENCE_WIDTH = FHD_1080.width
 REFERENCE_HEIGHT = FHD_1080.height
@@ -68,6 +69,16 @@ LOGIN_MAX_CLICKS = 3
 # forever with a gated batch never released: no login-screen signal this long
 # while a batch waits -> check whether the game is already in (once per span).
 PRELOGIN_QUIET_RECOVERY_SECONDS = 180.0
+# A run waiting for the login while the game is gone (closed by the player,
+# a crash, or it never opened): after the longest the game's opening may take
+# plus this, the run is cancelled.  Before, it stayed waiting with the tool
+# open, and the next time the player opened the game, hours later, the
+# login released it and 一键日常 started by itself (YES-BD2 #70, 2026-11-04).
+GAME_GONE_EXTRA_SECONDS = 60
+GAME_GONE_NOTE = (
+    "一键日常/周常已取消：在等游戏登录时，游戏关掉了，{m} 分钟都没再打开。"
+    "下次打开游戏不会自己开始跑，要跑请再按开始。"
+)
 # Two looks at the 公告事项 saying 维护 before the game is closed.
 MAINTENANCE_HITS_NEEDED = 2
 CONFIRM_WORDS = ("确认", "確認", "확인", "ok")
@@ -183,6 +194,7 @@ class AutoLoginTask(BaseBD2Task):
         self._login_clicks = 0
         self._touch_still_hits = 0
         self._finished = False
+        self._game_gone_since: float | None = None
         self._missing_template_names: set[str] = set()
         self._match_error_names: set[str] = set()
         self._match_pause_until = 0.0
@@ -235,13 +247,52 @@ class AutoLoginTask(BaseBD2Task):
         another task is current): the game never opened.
         """
         if game_running() is not False:  # running, or cannot tell
+            self._game_gone_since = None
             return False
         if self._state != "waiting":
             # Closed mid-login: the next opening logs in from the start.
             self._reset_login_state()
         self._set_stage("等待游戏启动")
         self._set_action("游戏没开，按开始会打开游戏并自动登录。")
+        self._cancel_run_when_game_stays_gone()
         return True
+
+    def _game_gone_limit(self) -> float:
+        """The longest the game's opening may take (设置 → 网络慢时的等待),
+        plus a minute: a run opening the game is never cancelled under it."""
+        start = wait_settings.get(wait_settings.START_TIMEOUT)
+        rounds = 1 + wait_settings.get(wait_settings.START_RETRIES)
+        return float(start * rounds + GAME_GONE_EXTRA_SECONDS)
+
+    def _cancel_run_when_game_stays_gone(self) -> None:
+        """A run waiting for this login, with the game gone too long: cancel it.
+
+        Nothing else ends that wait while the tool stays open, so the next
+        opening of the game, by the player and maybe hours later, logged in
+        and started the run with nobody pressing 开始 (YES-BD2 #70).
+        """
+        if not self._gated_batch_waiting():
+            self._game_gone_since = None
+            return
+        now = monotonic()
+        since = getattr(self, "_game_gone_since", None)
+        if since is None:
+            self._game_gone_since = now
+            return
+        limit = self._game_gone_limit()
+        if now - since < limit:
+            return
+        self._game_gone_since = None
+        if self._cancel_login_gated_batches():
+            scheduled_start.mark_run_pending(False)
+            if not bool(self.config.get("_enabled", False)):
+                # It logged in for that run only (自动登录游戏 off): it must
+                # not log in when the player opens the game later either.
+                self._enabled = False
+            self.log_warning(
+                f"自动登录：{GAME_GONE_NOTE.format(m=max(1, round(limit / 60)))}",
+                notify=True,
+            )
 
     def run(self):
         if self._finished:
@@ -367,7 +418,7 @@ class AutoLoginTask(BaseBD2Task):
         if self._passes(touch_to_start, TOUCH_TO_START_TEMPLATE):
             self.info_set("更新下载", "-")
             self.info_set("下载进度", "-")
-            self._click_login_after_touch(touch_to_start)
+            self._click_login_after_touch(touch_to_start)  # 不用确认：登录轮询里画面还在会再点（_touch_to_start_still_shown）
             return False
 
         if self._is_browndustx_present(browndustx):
@@ -412,7 +463,7 @@ class AutoLoginTask(BaseBD2Task):
             return False
         if not notice.now_in(now):
             self._maintenance_hits = 0
-            return self._press_notice_confirm(boxes)
+            return self._press_notice_confirm(boxes)  # 不用确认：登录轮询里公告还在每 2 秒再按
         self._maintenance_hits = getattr(self, "_maintenance_hits", 0) + 1
         if self._maintenance_hits < MAINTENANCE_HITS_NEEDED:
             return True
@@ -450,7 +501,7 @@ class AutoLoginTask(BaseBD2Task):
         self._set_stage("关闭维护预告")
         self._set_action("公告说的是之后的维护，按确认后接着登录。")
         self.log_info("自动登录：公告事项是之后的维护预告，按确认。")
-        if self._click_ocr_box_center(button, status_key="公告确认点击", after_sleep=1.0):
+        if self._click_ocr_box_center(button, status_key="公告确认点击", after_sleep=1.0):  # 不用确认：登录轮询里公告还在每 2 秒再按
             self._last_confirm_click_at = now
         return True
 
@@ -583,7 +634,7 @@ class AutoLoginTask(BaseBD2Task):
         if now - self._last_confirm_click_at < 2.0:
             return
         self._sleep_after_recognition()
-        self._click_match_center(confirm, after_sleep=1.0)
+        self._click_match_center(confirm, after_sleep=1.0)  # 不用确认：登录轮询里确认页还在每 2 秒再按
         self._last_confirm_click_at = now
 
     def _handle_browndustx_confirm_ocr(self, confirm_box) -> None:
@@ -595,7 +646,7 @@ class AutoLoginTask(BaseBD2Task):
             return
         self.log_info("自动登录：通过 BrownDustX 上下文与精确 CONFIRM OCR 处理确认页。")
         self._sleep_after_recognition()
-        if self._click_ocr_box_center(
+        if self._click_ocr_box_center(  # 不用确认：登录轮询里确认页还在每 2 秒再按
             confirm_box,
             status_key="BrownDustX Confirm 点击",
             after_sleep=1.0,
@@ -613,7 +664,7 @@ class AutoLoginTask(BaseBD2Task):
             return
         self.log_info("自动登录：检测到游戏数据下载确认页，点击 OCR 下载按钮中心。")
         self._sleep_after_recognition()
-        if self._click_ocr_box_center(
+        if self._click_ocr_box_center(  # 不用确认：登录轮询里下载页还在每 3 秒再按
             download_button,
             status_key="更新下载点击",
             after_sleep=1.0,
@@ -627,7 +678,7 @@ class AutoLoginTask(BaseBD2Task):
                 self.ocr(
                     frame=frame,
                     threshold=float(self.config.get("BrownDustX OCR 阈值", 0.2)),
-                    target_height=720,
+                    target_height=ocr_size.READ_HEIGHT,
                     log=False,
                     name="自动登录页面",
                 )
@@ -836,7 +887,7 @@ class AutoLoginTask(BaseBD2Task):
         self._touch_still_hits = getattr(self, "_touch_still_hits", 0) + 1
         if self._touch_still_hits < LOGIN_RECLICK_HITS:
             return False
-        self._click_login_after_touch(touch, retry=True)
+        self._click_login_after_touch(touch, retry=True)  # 不用确认：这就是补点
         return True
 
     def _login_wait_timed_out(self, now: float) -> bool:
@@ -1022,7 +1073,7 @@ class AutoLoginTask(BaseBD2Task):
                 boxes = self.ocr(
                     frame=target,
                     threshold=float(self.config.get("主页 OCR 阈值", 0.2)),
-                    target_height=720,
+                    target_height=ocr_size.READ_HEIGHT,
                     log=False,
                     name=f"主页抽抽乐 x{scale:g}",
                     reread=scale == 1.0,
@@ -1268,7 +1319,7 @@ class AutoLoginTask(BaseBD2Task):
             boxes = self.ocr(
                 frame=crop,
                 threshold=float(self.config.get("BrownDustX OCR 阈值", 0.2)),
-                target_height=720,
+                target_height=ocr_size.READ_HEIGHT,
                 log=False,
                 name=name,
             )

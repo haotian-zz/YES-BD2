@@ -43,7 +43,7 @@ from src.utils.frozen_screen import FrozenScreen
 from src.utils.image_utils import template_match_response
 from src.utils.ocr_utils import keyword_match_count, normalize_ocr_text
 from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS, wait_for
-from src.utils.wait_limits import LOADING_MAX_SECONDS, ProgressWait, is_loading_dark
+from src.utils.wait_limits import LOADING_MAX_SECONDS, ProgressWait, StillTimer, is_loading_dark
 
 # 1920x1080 reference coordinates / ROIs.
 HOME_BANNER_ROI = (1400, 480, 520, 420)
@@ -95,14 +95,28 @@ DEFEAT_LEAVE_ATTEMPTS = 3
 DEFEAT_BLANK_POINT = (960, 140)
 # Out of battle, with neither result screen read, this long: a screen the
 # watch does not know (the chain normally moves on within a few seconds).
-# Leo 2026-10-14 「認不出畫面要等30秒太久 8秒就可以了」.  Only one blank-area
-# tap is tried there, never Esc or a button: a skill animation that hides the
+# Leo 2026-10-14 「認不出畫面要等30秒太久 8秒就可以了」.  Only blank-area
+# taps (UNKNOWN_END_TAPS) are tried there, never Esc or a button: a skill animation that hides the
 # battle text must not get a pause menu, and the battle is never ended.  The
 # battle text coming back counts as still fighting.
 UNKNOWN_END_SECONDS = 8.0
 # bd2 会话 2026-11-06: a first clear showed a full-screen costume picture
 # with no text before VICTORY, and one blank tap did not take it away.
 UNKNOWN_END_TAPS = 3
+# Between two battles of the game's own chain (第3次 of 共5次 done) there is
+# no battle text: the camera pans, VICTORY shows, the screen fades and the
+# next battle loads.  A player's 1080p HDR PC (v0.2.31, 2026-11-05) took
+# longer than 8 s plus the blank tap there, and the run failed while the game
+# was already fighting 第4次／共5次.  That gap is the game working (Leo
+# 2026-10-15: loading does not count, at most LOADING_MAX_SECONDS): once a
+# battle of the chain was seen, VICTORY, the black loading screen or a picture
+# that keeps moving count as busy, never longer than LOADING_MAX_SECONDS
+# after the last battle frame.  That includes the end of the last battle (Leo
+# 2026-11-05 「如果他是第五場的victory呢」): the same pan and MVP screen come
+# before 返回 there, and replaying the real 5-run chain 8x slower failed on
+# them with the 8 s rule.  A still, unknown screen is still caught after
+# UNKNOWN_END_SECONDS.
+VICTORY_TEXT = "VICTORY"
 # Leo 2026-10-14 「如果要等待不要再有20幾30秒這種這麼長的時間頂多等8秒10秒」: every
 # wait for a page or a cue is 10 s at most (battles themselves are not waits).
 MAX_WAIT_SECONDS = 10.0
@@ -181,8 +195,9 @@ MODES = (NORMAL_MODE, CHALLENGE_MODE)
 HUB_KEYWORDS = MODES
 # Leo 2026-10-01: once 魔兽 opens the banner reads 魔兽追踪者解锁 instead of
 # 普通战斗解锁; both open the event.  Fixed in the code, not a setting (Leo
-# 2026-10-04).
-BANNER_KEYWORDS = ("战斗解锁", "普通战斗", "挑战战斗", "追踪者解锁")
+# 2026-10-04).  追踪者 alone (Leo 2026-10-27 「只要認到追蹤者就可以了」): the
+# 繁中 banner 魔獸追蹤者解鎖 simplifies to it.
+BANNER_KEYWORDS = ("战斗解锁", "普通战斗", "挑战战斗", "追踪者")
 AUTO_TOGGLE_TEXT = "自动战斗"
 QUICK_BATTLE_TEXT = "快速战斗"
 DIALOG_KEYWORDS = ("将按照指定次数", "自动进行战斗", "MAX")
@@ -533,7 +548,9 @@ class EventBattleTask(_ClaimTaskBase):
         """
         end_at = monotonic() + FAIL_SETTLE_SECONDS
         calm = 0
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             frame = self.capture_frame()
             if self._in_battle(frame) or self._auto_battle_shown(frame):
                 calm = 0
@@ -568,7 +585,9 @@ class EventBattleTask(_ClaimTaskBase):
         wait = float(self.config.get("横幅轮播等待秒数", MAX_WAIT_SECONDS))
         end_at = monotonic() + min(max(wait, 0.0), MAX_WAIT_SECONDS)
         tolerance = BANNER_POSITION_TOLERANCE / REFERENCE_WIDTH * max(1, int(self.width))
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             boxes = self._roi_boxes(self.capture_frame(), HOME_BANNER_ROI, "活动横幅")
             self.info_set("活动横幅 OCR", self._boxes_text(boxes) or "-")
             first = self._box_with(boxes, keywords)
@@ -598,7 +617,7 @@ class EventBattleTask(_ClaimTaskBase):
         if self._wait_for_hub(timeout=0.0):
             return "ok"
         if any(self._wait_for_stage_page(mode, timeout=0.0, quiet=True) for mode in MODES):
-            self._click_reference(*BACK_BUTTON_POINT, after_sleep=1.0)
+            self._click_reference(*BACK_BUTTON_POINT, after_sleep=1.0)  # 不用确认：下面等活动首页，没等到就回主页
             if self._wait_for_hub(timeout=HUB_RETRY_SECONDS):
                 return "ok"
         if not recover_to_home(self):
@@ -614,7 +633,7 @@ class EventBattleTask(_ClaimTaskBase):
                     return "no_event"
                 return self._failed("点了活动横幅没进去，之后横幅也找不到了")
             self._sleep_after_recognition()
-            self._click_box(banner, after_sleep=1.0)
+            self._click_box(banner, after_sleep=1.0)  # 不用确认：循环里还在主页就再点横幅
             if self._wait_for_hub(timeout=HUB_RETRY_SECONDS):
                 return "ok"
             if self._wait_for_home_confirmation("活动横幅重试前主页确认", timeout=2.0):
@@ -666,7 +685,7 @@ class EventBattleTask(_ClaimTaskBase):
             if button is None:
                 return self._failed(missed)
             self._sleep_after_recognition()
-            self._click_box(button, after_sleep=1.5)
+            self._click_box(button, after_sleep=1.5)  # 不用确认：循环里还在活动页就再点
             if self._wait_for_stage_page(mode, timeout=HUB_RETRY_SECONDS, quiet=True):
                 return "ok"
             if usual:
@@ -999,7 +1018,7 @@ class EventBattleTask(_ClaimTaskBase):
         self._sleep_after_recognition()
         opened = False
         for _attempt in range(2):
-            self._click_reference(*AUTO_TOGGLE_POINT, after_sleep=1.2)
+            self._click_reference(*AUTO_TOGGLE_POINT, after_sleep=1.2)  # 不用确认：循环两次，窗口没出来再按
             if self._dismiss_ap_shortage():
                 return 0
             if self._wait_for_dialog():
@@ -1015,7 +1034,7 @@ class EventBattleTask(_ClaimTaskBase):
             return None
         cost = self._set_dialog_count(wanted, state)
         if cost is None:
-            self._click_reference(*DIALOG_CANCEL_POINT, after_sleep=1.0)
+            self._click_reference(*DIALOG_CANCEL_POINT, after_sleep=1.0)  # 不用确认：失败了，回主页会再确认
             return None
         if cost == 0:
             self.log_info(
@@ -1048,9 +1067,11 @@ class EventBattleTask(_ClaimTaskBase):
             start = self._box_with(boxes, ("战斗",))
             if start is None:
                 break
-            self._click_box(start, after_sleep=1.5)
+            self._click_box(start, after_sleep=1.5)  # 不用确认：循环里没开打、窗口还在就再点
             end_at = monotonic() + START_CONFIRM_SECONDS
-            while monotonic() <= end_at:
+            looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+            while not looked or monotonic() <= end_at:
+                looked = True
                 if self._dismiss_ap_shortage():
                     return "no_ap"
                 if self._in_battle(self.capture_frame()):
@@ -1061,7 +1082,7 @@ class EventBattleTask(_ClaimTaskBase):
                 return "started" if self._wait_in_battle(START_CONFIRM_SECONDS) else "failed"
             self.log_info(f"活动每日战斗：第{attempt}次点击战斗后未开始，重试。")
         if self._dialog_open():
-            self._click_reference(*DIALOG_CANCEL_POINT, after_sleep=1.0)
+            self._click_reference(*DIALOG_CANCEL_POINT, after_sleep=1.0)  # 不用确认：失败了，回主页会再确认
         self.log_info("活动每日战斗：自动战斗未能开始。")
         return "failed"
 
@@ -1085,9 +1106,25 @@ class EventBattleTask(_ClaimTaskBase):
         Nothing is pressed."""
         return field_battle.auto_on(self._roi_boxes(frame, None, "活动战斗画面"))
 
+    def _between_battles(self, frame, boxes, battle_seen: bool, still, since_battle: float) -> bool:
+        """The game is moving on by itself to the chain's next battle or its
+        result screen (see VICTORY_TEXT's note): VICTORY read, or a battle
+        seen and the screen loading or moving.  Never past LOADING_MAX_SECONDS
+        after the last battle frame.  Nothing is pressed."""
+        if since_battle > LOADING_MAX_SECONDS:
+            return False
+        text = normalize_ocr_text(self._boxes_text(boxes)).upper().replace(" ", "")
+        if VICTORY_TEXT in text:
+            return True
+        if not battle_seen:
+            return False
+        return is_loading_dark(frame) or still.still_for(frame, monotonic()) < UNKNOWN_END_SECONDS
+
     def _wait_in_battle(self, timeout: float) -> bool:
         end_at = monotonic() + timeout
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             if self._in_battle(self.capture_frame()):
                 return True
             self.sleep(1.0)
@@ -1095,18 +1132,45 @@ class EventBattleTask(_ClaimTaskBase):
 
     def _wait_for_dialog(self, timeout: float = 6.0) -> bool:
         end_at = monotonic() + timeout
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             if self._dialog_open():
                 return True
             self.sleep(0.5)
         self.log_info("活动每日战斗：未出现自动战斗次数窗口。")
         return False
 
+    def _button_cost(self, roi, name: str) -> tuple[int | None, str]:
+        """The start button's count and the text read; 3x when the digit was lost."""
+        frame = self.capture_frame()
+        text = self._boxes_text(self._roi_boxes(frame, roi, name))
+        cost = parse_battle_cost(text)
+        if cost is None:
+            text = self._boxes_text(self._roi_boxes(frame, roi, name, enlarge=3.0)) or text
+            cost = parse_battle_cost(text)
+        return cost, text
+
     def _dialog_cost(self) -> int | None:
-        boxes = self._roi_boxes(self.capture_frame(), DIALOG_START_ROI, "自动战斗开始")
-        cost = parse_battle_cost(self._boxes_text(boxes))
-        self.info_set("自动战斗场数", cost if cost is not None else "-")
+        cost, text = self._button_cost(DIALOG_START_ROI, "自动战斗开始")
+        self.info_set("自动战斗场数", cost if cost is not None else f"- (OCR {text or '-'})")
         return cost
+
+    def _count_by_presses(self, cost, wanted: int, free, min_point, plus_point, read):
+        """A count not read or not as expected never stops the battles.
+
+        Only called with the 仅使用免费活动AP switch seen on (Leo 2026-11-07
+        「都按得下 MAX 也按得下僅免費了，一樣要按」).  Set by MIN and +, at most
+        the top bar's free AP, so a switch read wrongly still spends no more
+        than that.  The read is only logged.
+        """
+        target = wanted if free is None else min(wanted, free)
+        if target <= 0 or (cost is not None and cost <= target):
+            return cost
+        read_after = self._count_from_min(min_point, plus_point, target, read)
+        if read_after != target:
+            self.log_info(f"活动每日战斗：场数读到 {read_after}，免费AP开关开着，按 {target} 场打。")
+        return target
 
     def _settled_cost(self, read, timeout: float = 3.0) -> int | None:
         """The start button's count once two reads agree.
@@ -1139,20 +1203,41 @@ class EventBattleTask(_ClaimTaskBase):
         if cost == 0:
             return 0
         if cost is not None and cost > wanted:
-            self._click_reference(*DIALOG_MIN_POINT, after_sleep=0.6)
-            for _ in range(wanted - 1):
-                self._click_reference(*DIALOG_PLUS_POINT, after_sleep=0.3)
-            cost = self._settled_cost(self._dialog_cost)
+            cost = self._count_from_min(DIALOG_MIN_POINT, DIALOG_PLUS_POINT, wanted, self._dialog_cost)
+        if free_only:
+            cost = self._count_by_presses(
+                cost, wanted, free, DIALOG_MIN_POINT, DIALOG_PLUS_POINT, self._dialog_cost
+            )
         # Second guard independent of the switch colour: never exceed the free
         # AP read from the top bar when only free AP may be used.
         over_free = free_only and free is not None and cost is not None and cost > free
         if cost is None or cost <= 0 or cost > wanted or over_free:
             shown = free if free is not None else "没读到"
             self.log_info(f"活动每日战斗：场数校验失败（{cost}/{wanted}，免费AP {shown}）。")
+            self._save_flow_diagnostic(f"{self.claim_log_name}_dialog_count_failed")
             self._failed(f"场数对不上（读到 {cost}，要打 {wanted}，免费AP {shown}），所以没开打")
             return None
         if free is None:
             self.log_info(f"活动每日战斗：免费AP开关开着，窗口场数 {cost}，按这个打。")
+        return cost
+
+    def _count_from_min(self, min_point, plus_point, wanted: int, read) -> int | None:
+        """MIN, then +1 up to ``wanted``; the count read.
+
+        These presses only change the window's count (no AP is spent).  A
+        count above ``wanted`` after them means a press was not taken: set
+        it once more (Leo 2026-11-05 「所有地方都要有補救方案」).  The caller
+        still refuses any count above ``wanted``.
+        """
+        cost = None
+        for attempt in range(2):
+            self._click_reference(*min_point, after_sleep=0.6)  # 不用确认：下面读场数，比要的多再设一次
+            for _ in range(wanted - 1):
+                self._click_reference(*plus_point, after_sleep=0.3)  # 不用确认：下面读场数
+            cost = self._settled_cost(read)
+            if cost is None or cost <= wanted or attempt:
+                return cost
+            self.log_info(f"活动每日战斗：场数设成 {wanted} 后读到 {cost}，比要的多，再设一次。")
         return cost
 
     def _max_count(self, max_point, read) -> int | None:
@@ -1162,7 +1247,7 @@ class EventBattleTask(_ClaimTaskBase):
         as 20/5, so the dialog opens anyway).  A slow window may not have
         counted yet, so 0 is only believed on the second look.
         """
-        self._click_reference(*max_point, after_sleep=0.8)
+        self._click_reference(*max_point, after_sleep=0.8)  # 不用确认：下一行读场数，0 场再按一次
         cost = self._settled_cost(read)
         if cost == 0:
             self.sleep(1.0)
@@ -1193,7 +1278,7 @@ class EventBattleTask(_ClaimTaskBase):
         if ensure_free_switch_on(
             "活动每日战斗：仅用免费活动AP",
             lambda: self._free_ap_switch_ratio(roi),
-            lambda: self._click_reference(*point, after_sleep=0.5),
+            lambda: self._click_reference(*point, after_sleep=0.5),  # 不用确认：只按一次，再按会把认不出亮色的开关关掉（review #28）
             on_above=FREE_AP_SWITCH_YELLOW_RATIO,
             settle=FREE_AP_SWITCH_SETTLE_SECONDS,
             sleep=self.sleep,
@@ -1215,8 +1300,12 @@ class EventBattleTask(_ClaimTaskBase):
         calm = 0
         defeat_calm = 0
         busy_at = monotonic()  # last frame in battle or on a known screen
+        battle_at = busy_at  # last frame in battle
+        still = StillTimer()
         taps = 0
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             frame = self.capture_frame()
             progress_text = normalize_ocr_text(
                 self._boxes_text(self._roi_boxes(frame, PROGRESS_ROI, "自动战斗进度"))
@@ -1234,7 +1323,8 @@ class EventBattleTask(_ClaimTaskBase):
             if in_battle:
                 calm = 0
                 defeat_calm = 0
-                busy_at = monotonic()
+                busy_at = battle_at = monotonic()
+                still.reset()
                 taps = 0
             elif self._defeat_shown(frame):
                 # Two calm frames, as for the win screen.
@@ -1256,9 +1346,15 @@ class EventBattleTask(_ClaimTaskBase):
                 defeat_calm = 0
                 if self._dismiss_ap_shortage():
                     return max(seen, 1)
-                if self._auto_battle_shown(frame):
+                screen = self._roi_boxes(frame, None, "活动战斗画面")
+                if field_battle.auto_on(screen):
                     busy_at = monotonic()
                     taps = 0
+                elif self._between_battles(
+                    frame, screen, seen > 0, still, monotonic() - battle_at
+                ):
+                    busy_at = monotonic()
+                    self.info_set("当前阶段", "连战之间：等下一场开打")
                 elif monotonic() - busy_at > UNKNOWN_END_SECONDS:
                     # Neither battle nor a result screen it knows.
                     if mode and self._wait_for_stage_page(mode, timeout=0.0, quiet=True):
@@ -1292,7 +1388,7 @@ class EventBattleTask(_ClaimTaskBase):
                 return True
             if attempt > 1:
                 self.log_info(f"活动每日战斗：第{attempt}次点击返回。")
-            self._click_box(back, after_sleep=2.5)
+            self._click_box(back, after_sleep=2.5)  # 不用确认：循环里返回还在就再点
         buttons = self._roi_boxes(self.capture_frame(), RESULT_BUTTONS_ROI, "战斗结果")
         if self._box_with(buttons, (RESULT_BACK_TEXT,)) is None:
             return True
@@ -1352,7 +1448,7 @@ class EventBattleTask(_ClaimTaskBase):
                 leave = self._box_with(buttons, (RESULT_BACK_TEXT,))
             if leave is not None:
                 self.log_info(f"活动每日战斗：失败画面按「{leave.name}」。")
-                self._click_box(leave, after_sleep=2.0)
+                self._click_box(leave, after_sleep=2.0)  # 不用确认：循环里没离开就点空白、按 Esc
             elif attempt == 1:
                 self.log_info("活动每日战斗：失败画面没读到离开的按钮，点空白处。")
                 self._click_reference(  # 不用确认：下面 wait_for 看画面有没有离开
@@ -1380,7 +1476,7 @@ class EventBattleTask(_ClaimTaskBase):
         for _read in range(AP_SHORT_CANCEL_READS):
             cancel = self._box_with(boxes, (CANCEL_TEXT,))
             if cancel is not None:
-                self._click_box(cancel, after_sleep=1.0)
+                self._click_box(cancel, after_sleep=1.0)  # 不用确认：调用处循环，弹窗还在下一轮再按读到的取消；旁边是补充，不点固定位置
                 return True
             self.sleep(0.5)
             boxes = self._roi_boxes(self.capture_frame(), DIALOG_ROI, "AP不足")
@@ -1429,7 +1525,7 @@ class EventBattleTask(_ClaimTaskBase):
             return self._failed("按了「快速战斗」，窗口没打开")
         cost = self._set_quick_count(wanted, state)
         if cost is None:
-            self._click_reference(*QUICK_DIALOG_CANCEL_POINT, after_sleep=1.0)
+            self._click_reference(*QUICK_DIALOG_CANCEL_POINT, after_sleep=1.0)  # 不用确认：失败了，回主页会再确认
             return "failed"
         if cost == 0:
             self.log_info(
@@ -1449,11 +1545,11 @@ class EventBattleTask(_ClaimTaskBase):
             "活动每日战斗：快速战斗窗口找「战斗」",
         )
         if start is None:
-            self._click_reference(*QUICK_DIALOG_CANCEL_POINT, after_sleep=1.0)
+            self._click_reference(*QUICK_DIALOG_CANCEL_POINT, after_sleep=1.0)  # 不用确认：失败了，回主页会再确认
             return self._failed("快速战斗窗口里没找到「战斗」")
         self._pause_guard()
         try:
-            self._click_box(start, after_sleep=1.0)
+            self._click_box(start, after_sleep=1.0)  # 不用确认：开始快速战斗会花活动 AP，不重按
             result = self._wait_quick_result()
         finally:
             self._resume_guard()
@@ -1520,9 +1616,11 @@ class EventBattleTask(_ClaimTaskBase):
             if button is None:
                 return False
             self._sleep_after_recognition()
-            self._click_box(button, after_sleep=1.0)
+            self._click_box(button, after_sleep=1.0)  # 不用确认：循环里窗口没开就再点
             end_at = monotonic() + 4.0
-            while monotonic() <= end_at:
+            looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+            while not looked or monotonic() <= end_at:
+                looked = True
                 if self._dismiss_ap_shortage():
                     return False
                 if self._quick_dialog_open():
@@ -1532,9 +1630,8 @@ class EventBattleTask(_ClaimTaskBase):
         return False
 
     def _quick_cost(self) -> int | None:
-        boxes = self._roi_boxes(self.capture_frame(), QUICK_DIALOG_START_ROI, "快速战斗开始")
-        cost = parse_battle_cost(self._boxes_text(boxes))
-        self.info_set("快速战斗场数", cost if cost is not None else "-")
+        cost, text = self._button_cost(QUICK_DIALOG_START_ROI, "快速战斗开始")
+        self.info_set("快速战斗场数", cost if cost is not None else f"- (OCR {text or '-'})")
         return cost
 
     def _set_quick_count(self, wanted: int, state: dict) -> int | None:
@@ -1553,10 +1650,13 @@ class EventBattleTask(_ClaimTaskBase):
         if cost == 0:
             return 0
         if cost is not None and cost > wanted:
-            self._click_reference(*QUICK_DIALOG_MIN_POINT, after_sleep=0.6)
-            for _ in range(wanted - 1):
-                self._click_reference(*QUICK_DIALOG_PLUS_POINT, after_sleep=0.3)
-            cost = self._settled_cost(self._quick_cost)
+            cost = self._count_from_min(
+                QUICK_DIALOG_MIN_POINT, QUICK_DIALOG_PLUS_POINT, wanted, self._quick_cost
+            )
+        if free_only:
+            cost = self._count_by_presses(
+                cost, wanted, free, QUICK_DIALOG_MIN_POINT, QUICK_DIALOG_PLUS_POINT, self._quick_cost
+            )
         over_free = free_only and free is not None and cost is not None and cost > free
         if cost is None or cost <= 0 or cost > wanted or over_free:
             shown = free if free is not None else "没读到"
@@ -1569,10 +1669,18 @@ class EventBattleTask(_ClaimTaskBase):
             self.log_info(f"活动每日战斗：免费AP开关开着，快速战斗窗口场数 {cost}，按这个打。")
         return cost
 
+    def _quick_result_still_shown(self) -> bool:
+        text = self._boxes_text(
+            self._roi_boxes(self.capture_frame(), QUICK_RESULT_ROI, "快速战斗结果")
+        )
+        return keyword_match_count(text, QUICK_RESULT_KEYWORDS) >= 2
+
     def _wait_quick_result(self) -> str:
         """done once the REWARD overlay showed and was closed; no_ap / failed."""
         end_at = monotonic() + QUICK_RESULT_TIMEOUT
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             if self._dismiss_ap_shortage():
                 return "no_ap"
             text = self._boxes_text(
@@ -1580,11 +1688,14 @@ class EventBattleTask(_ClaimTaskBase):
             )
             if keyword_match_count(text, QUICK_RESULT_KEYWORDS) >= 2:
                 self.info_set("快速战斗结果", text)
-                self._click_reference(*QUICK_RESULT_DISMISS_POINT, after_sleep=1.0)
+                self._click_reference(*QUICK_RESULT_DISMISS_POINT, after_sleep=1.0)  # 不用确认：下面看奖励画面还在就再点
+                if self._quick_result_still_shown():
+                    self.log_info("活动每日战斗：点了奖励画面还在，再点一次。")
+                    self._click_reference(*QUICK_RESULT_DISMISS_POINT, after_sleep=1.0)  # 不用确认：这就是补点，下一步会再确认画面
                 return "done"
             self.sleep(0.5)
         if self._quick_dialog_open():
-            self._click_reference(*QUICK_DIALOG_CANCEL_POINT, after_sleep=1.0)
+            self._click_reference(*QUICK_DIALOG_CANCEL_POINT, after_sleep=1.0)  # 不用确认：失败了，回主页会再确认
         self.log_info("活动每日战斗：快速战斗后没有看到奖励画面。")
         return "failed"
 

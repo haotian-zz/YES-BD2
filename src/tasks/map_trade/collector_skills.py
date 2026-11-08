@@ -59,6 +59,7 @@ from src.tasks.map_trade.models import (
 from src.tasks.map_trade import skill_layout
 from src.utils import ocr_count
 from src.utils.plain_text import DIAGNOSTIC_PREFIX
+from src.utils import ocr_size
 
 # Used to split a count read without its slash ("7180" -> 7/80) until the
 # HUD has shown today's limit (see ``_known_limit``).
@@ -116,6 +117,13 @@ SEARCH_RETRY_PAUSE_SECONDS = 1.0
 # Digits over a still-bright 探查 glyph must tick down within this pause.
 SEARCH_TICK_CONFIRM_SECONDS = 1.2
 SEARCH_TICK_MAX_DROP = 3
+# Leo 2026-11-02 「要有探查在倒數才吸收」: 吸收 is pressed only with at least
+# this many seconds left on 探查's countdown (the read and the press are
+# ~0.5 s apart).  Less: wait for it to end, start 探查 again, then 吸收.
+ABSORB_MIN_SEARCH_SECONDS = 3
+# How long a nearly finished 探查 is waited for (looks of 0.5 s).
+SEARCH_END_WAIT_LOOKS = 10
+SEARCH_END_WAIT_INTERVAL = 0.5
 SLOT_ICON_SIZE = 70 / 1080
 # The stand-in detection for a washed-out icon pressed at its fixed slot.
 SLOT_REASON = "固定栏位：图标被背景干扰，以次数判断"
@@ -517,7 +525,7 @@ class SkillExecutionMixin:
                 self.vision.capture(),
                 f"{action.name}执行反馈",
                 relative_roi=ACTION_FEEDBACK_RELATIVE_ROI,
-                target_height=1080,
+                target_height=ocr_size.READ_HEIGHT,
             )
             # OCR 只输出简体中文（繁体转换已取消）；引擎可能粘连相邻文本，
             # 先归一再打分，并让显式失败关键字在平分（或更强正向词）时获胜，
@@ -739,7 +747,7 @@ class SkillExecutionMixin:
                 frame,
                 "探查倒计时",
                 relative_roi=countdown_roi,
-                target_height=1080,
+                target_height=ocr_size.READ_HEIGHT,
                 ocr_scale=SKILL_OCR_UPSCALE,
             )
             countdown = re.sub(r"\D", "", last_text)
@@ -835,7 +843,7 @@ class SkillExecutionMixin:
             frame,
             "探查倒计时",
             relative_roi=SEARCH_COUNTDOWN_RELATIVE_ROI,
-            target_height=1080,
+            target_height=ocr_size.READ_HEIGHT,
             ocr_scale=SKILL_OCR_UPSCALE,
         )
         countdown = re.sub(r"\D", "", text)
@@ -853,22 +861,68 @@ class SkillExecutionMixin:
         the slot.  The digits cover the glyph while 探查 runs, so digits with
         the idle glyph still showing must also tick down to count.
         """
+        return self._search_seconds_left() is not None
+
+    def _search_seconds_left(self) -> int | None:
+        """Seconds left on a live 探查 countdown, None when none runs
+        (the rules of _search_running)."""
         frame = self.vision.capture()
         first = self._read_search_countdown(frame)
         if first is None:
-            return False
+            return None
         detection = self.action_icons.detect(frame, SEARCH_ICON)
         if detection.state is not ActionIconState.AVAILABLE:
-            return True
+            return first
         self.task.sleep(SEARCH_TICK_CONFIRM_SECONDS)
         second = self._read_search_countdown(self.vision.capture())
         if second is not None and 0 < first - second <= SEARCH_TICK_MAX_DROP:
-            return True
+            return second
         self.task.log_info(
             f"探查：栏位读到数字 {first}→{second if second is not None else '-'}，"
             "但探查图标仍可按且数字没有倒数，不算进行中。"
         )
-        return False
+        return None
+
+    def _search_on_for_absorb(
+        self, *, map_role: CollectionMapRole
+    ) -> tuple[bool, SkillExecutionResult | None]:
+        """(探查 pressed again, failure) right before 吸收 is pressed.
+
+        Player 2026-11-02 (Leo 「要有探查在倒數才吸收」): 探查 ran on the
+        first map, was still counting down on arrival at the second (so it
+        was not pressed again), and ended just before 吸收 went: the hidden
+        items there were missed.  The countdown is read again at the press;
+        with too little left it is waited out and 探查 started again.  If it
+        cannot be started, 吸收 is not pressed and the map is reported.
+        """
+        left = self._search_seconds_left()
+        if left is not None and left >= ABSORB_MIN_SEARCH_SECONDS:
+            return False, None
+        if left is not None:
+            self._status(
+                "采集进度",
+                f"{map_role.label}：探查只剩 {left} 秒，等它结束重开探查再吸收",
+            )
+            for _look in range(SEARCH_END_WAIT_LOOKS):
+                self.task.sleep(SEARCH_END_WAIT_INTERVAL)
+                left = self._search_seconds_left()
+                if left is None or left >= ABSORB_MIN_SEARCH_SECONDS:
+                    break
+            if left is not None and left >= ABSORB_MIN_SEARCH_SECONDS:
+                # A misread small number: the countdown is still long.
+                return False, None
+        else:
+            self._status("采集进度", f"{map_role.label}：要吸收时探查已经结束，先重开探查")
+        started = self._ensure_search(map_role=map_role)
+        if isinstance(started, SkillExecutionResult):
+            return True, SkillExecutionResult(
+                False,
+                message=(
+                    f"要按吸收时探查已经结束，重开探查没有成功（{started.message}），"
+                    "这张图先不按吸收，免得漏掉探查才看得到的东西"
+                ),
+            )
+        return True, None
 
     def _absorb_used_up(
         self, *, card_id: str, map_role: CollectionMapRole
@@ -969,7 +1023,7 @@ class SkillExecutionMixin:
                 self.vision.capture(),
                 "战斗区域1探查倒计时",
                 relative_roi=session.relative_roi,
-                target_height=1080,
+                target_height=ocr_size.READ_HEIGHT,
                 ocr_scale=SKILL_OCR_UPSCALE,
             )
             countdown = re.sub(r"\D", "", last_text)
@@ -1116,6 +1170,29 @@ class SkillExecutionMixin:
         for action, frame, detection, before in armed:
             if clicked:
                 last_click_at = self._settle_before_next_press(clicked, action, last_click_at)
+            if action.name == ABSORB_ACTION.name:
+                pressed_search, failure = self._search_on_for_absorb(map_role=map_role)
+                if failure is not None:
+                    # Only 吸收 waits for 探查; 召集/压制 go on by their own
+                    # icons (Leo 2026-10-15 「就算沒資源能吸收 也要按壓制」).
+                    # The map is reported and done again on a later visit;
+                    # its armed record is let go (it was never clicked).
+                    self.progress.mark_action_void(
+                        card_id, map_role, action.name, "探查没开起来，没按吸收"
+                    )
+                    results.append(failure)
+                    continue
+                if pressed_search:
+                    # The bar dims after 探查: look again before pressing.
+                    new_frame, new_detection = self._detect_action_icon(
+                        action.icon, require_stable=True
+                    )
+                    new_frame, new_detection = self._wait_out_dim(
+                        action, new_frame, new_detection
+                    )
+                    if new_detection.state is ActionIconState.AVAILABLE and new_detection.match:
+                        frame, detection = new_frame, new_detection
+                    last_click_at = None
             if last_click_at is not None:
                 # Slower PCs missed presses 0.5 s apart (player, 2026-10-09).
                 self.task.sleep(max(0.0, self._click_interval() - (monotonic() - last_click_at)))
@@ -2202,7 +2279,7 @@ class SkillExecutionMixin:
                 frame,
                 name,
                 relative_roi=self._action_text_relative_roi(detection, frame.shape),
-                target_height=1080,
+                target_height=ocr_size.READ_HEIGHT,
             )
 
         if roi is not None:
@@ -2225,7 +2302,7 @@ class SkillExecutionMixin:
             self.vision.capture(),
             f"{action.name}次数",
             relative_roi=action.fixed_count_relative_roi,
-            target_height=1080,
+            target_height=ocr_size.READ_HEIGHT,
             ocr_scale=look.scale,
             **({"bordered": True} if look.bordered else {}),
         )

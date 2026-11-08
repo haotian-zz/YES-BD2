@@ -7,7 +7,8 @@ import numpy as np
 from src.tasks.map_trade.card_status import CardStatusDetector
 from src.tasks.map_trade.models import COLLECTABLE_CARDS, MapPageMode, ScreenState
 from src.tasks.map_trade.navigator_constants import (
-    AREA_MAP_HEADER_TAGS,
+    area_map_header_named,
+    teleport_map_header_read,
     BARGAIN_CONFIRM_POINT,
     BARGAIN_POINT,
     CHAPTER_HOME_POINT,
@@ -16,6 +17,7 @@ from src.tasks.map_trade.navigator_constants import (
     CLASSIFY_COOKING_MATERIALS_RELATIVE_ROI,
     CLASSIFY_COOKING_TITLE_RELATIVE_ROI,
     CLASSIFY_LOADING_RELATIVE_ROI,
+    CLASSIFY_NOW_LOADING_RELATIVE_ROI,
     CLASSIFY_SHOP_TABS_RELATIVE_ROI,
     CLASSIFY_SHOP_TITLE_RELATIVE_ROI,
     DISCOUNT_SHOP_CLOSE_DIALOG_REGION,
@@ -76,7 +78,11 @@ from src.tasks.map_trade.navigator_constants import (
     SANDBOX_SKILL_UNSELECTED_YELLOW_MAX_RATIO,
     SANDBOX_TELEPORT_SKILL_TEMPLATE,
     SANDBOX_TEMPLATES,
+    SANDBOX_MINIMAP_TEMPLATE_NAME,
+    PAGE_COVERED_TOP_BAR,
+    PAGE_COVERED_TOP_P99,
     FIELD_ALL_KEYCAP_TEMPLATES,
+    FIELD_KEYCAP_H_NAME,
     FIELD_KEYCAP_MIN_PASSES,
     SHOP_PAGE_OCR_KEYWORDS,
     STORY_BADGE_CANDIDATE_ZNCC_SCORE,
@@ -117,6 +123,8 @@ from src.tasks.map_trade.navigator_sandbox import SandboxNavigationMixin
 from src.tasks.map_trade.navigator_story import StoryCardNavigationMixin
 from src.tasks.map_trade.navigator_trade import TradeNavigationMixin
 from src.tasks.map_trade.vision import Vision, normalize_text
+from src.utils import near_miss
+from src.utils.frozen_screen import LOADING_RING_ROI, ring_percent
 from src.utils.home_confirmation import (
     HOME_ANNOUNCEMENT_CLEAR_RELATIVE_POINT,
     HOME_GACHA_OCR_RELATIVE_ROI,
@@ -261,7 +269,7 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
         evidence: list[str] = []
         mode = MapPageMode.UNKNOWN
         footer_text = ""
-        if normalize_text("移动魔法阵") in normalized_header:
+        if teleport_map_header_read(normalized_header):
             direct, direct_evidence = self._map_page_template_signal(
                 frame,
                 TELEPORT_MAP_DIRECT_HEADER_TEMPLATE,
@@ -301,8 +309,8 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
                 mode = MapPageMode.DIRECT_TELEPORT
             elif generated and not direct and has_legend and has_teleport_structure:
                 mode = MapPageMode.GENERATE_TELEPORT
-        elif self._known_story_map_title_in_text(normalized_header) or any(
-            tag in normalized_header for tag in AREA_MAP_HEADER_TAGS
+        elif self._known_story_map_title_in_text(normalized_header) or (
+            area_map_header_named(normalized_header)
         ):
             # A map outside the cards' own titles, such as a chapter's
             # hunting ground (player 1080p 2026-10-23, 第9章 「战斗 守山人休息处」):
@@ -322,10 +330,18 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
                 footer_text = ""
             normalized_footer = normalize_text(footer_text)
             keyword_hits = sum(
-                normalize_text(keyword) in normalized_footer
-                for keyword in SANDBOX_NAVIGATION_PAGE_KEYWORDS
+                any(normalize_text(word) in normalized_footer for word in words)
+                for words in SANDBOX_NAVIGATION_PAGE_KEYWORDS
             )
             evidence.append(f"箱庭大地图关键词={keyword_hits}/3")
+            near_miss.note(
+                getattr(self.task, "log_info", None),
+                "箱庭大地图底部控件",
+                [normalize_text(keyword) for keyword in SANDBOX_NAVIGATION_PAGE_KEYWORDS],
+                normalized_footer,
+                keyword_hits,
+                2,
+            )
             if keyword_hits >= 2:
                 left, left_evidence = self._map_page_template_signal(
                     frame,
@@ -366,9 +382,33 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
         """Classify shared map states without trade- or PVP-specific templates."""
 
         started = monotonic()
+        frame = self.vision.capture() if frame is None else frame
         state = self._classify_frame(frame)
+        try:
+            self.page_covered(frame, state)  # logged only, see page_covered
+        except (AttributeError, TypeError, ValueError):
+            pass
         self._status("界面分类耗时", f"{monotonic() - started:.3f}s")
         return state
+
+    def page_covered(self, frame, state: ScreenState) -> bool:
+        """Something (a popup) lies over the page ``state`` was read from.
+
+        The page cues show through the dimmed layer, so classify still names
+        the page underneath (price list over the shop, auto-move over the
+        field map).  Only measured and logged for now; no press depends on
+        it (Leo 2026-11-05: change nothing before it is proven better).
+        """
+        if state not in (ScreenState.SHOP, ScreenState.AREA_MAP, ScreenState.SANDBOX_MAP, ScreenState.CARD_MENU):
+            return False
+        height, width = frame.shape[:2]
+        x0, y0, x1, y1 = PAGE_COVERED_TOP_BAR
+        bar = frame[int(y0 * height) : max(int(y1 * height), 1), int(x0 * width) : int(x1 * width)]
+        grey = bar.mean(axis=2) if bar.ndim == 3 else bar
+        top = float(np.percentile(grey, 99))
+        covered = top < PAGE_COVERED_TOP_P99
+        self._status("页面被遮挡", f"{state.value} 顶栏亮度p99={top:.0f} {'被遮挡' if covered else '未遮挡'}")
+        return covered
 
     def _classify_frame(self, frame) -> ScreenState:
         frame = self.vision.capture() if frame is None else frame
@@ -379,11 +419,11 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
         ):
             return ScreenState.LOADING
         sandbox_signals = []
-        sandbox_confirmed = False
+        template_passes = {}
         for spec in SANDBOX_TEMPLATES:
             result = self.vision.match(frame, spec)
             passed = self.vision.passes(result, spec)
-            sandbox_confirmed = sandbox_confirmed or passed
+            template_passes[spec.name] = passed
             sandbox_signals.append(
                 (
                     f"{spec.name}={'pass' if passed else 'miss'}"
@@ -391,22 +431,30 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
                     f"z={result.zncc_score:.3f})"
                 )
             )
-        if not sandbox_confirmed:
-            keycaps = [self.vision.match(frame, spec) for spec in FIELD_ALL_KEYCAP_TEMPLATES]
-            sandbox_confirmed = (
-                sum(
-                    self.vision.passes(result, spec)
-                    for result, spec in zip(keycaps, FIELD_ALL_KEYCAP_TEMPLATES)
-                )
-                >= FIELD_KEYCAP_MIN_PASSES
-            )
-            sandbox_signals.append(
-                "按键CHMQ="
-                + ("pass" if sandbox_confirmed else "miss")
-                + "("
-                + ",".join(f"{r.score:.2f}/{r.pixel_score:.2f}" for r in keycaps)
-                + ")"
-            )
+        keycaps = [self.vision.match(frame, spec) for spec in FIELD_ALL_KEYCAP_TEMPLATES]
+        cap_passes = {
+            spec.name: self.vision.passes(result, spec)
+            for result, spec in zip(keycaps, FIELD_ALL_KEYCAP_TEMPLATES)
+        }
+        # The quick-switch button is no proof alone: the restaurant's
+        # business screen shows it too, with the H cap and no other (3 player
+        # frames, screen library 2026-11-05).  H is on many non-field pages,
+        # so beside the button one of C / M / Q must show (every field,
+        # square and PVP-hub frame of the library has one; while walking M
+        # stays).
+        field_only_caps = sum(passed for name, passed in cap_passes.items() if name != FIELD_KEYCAP_H_NAME)
+        sandbox_confirmed = (
+            template_passes.get(SANDBOX_MINIMAP_TEMPLATE_NAME, False)
+            or (template_passes.get(QUICK_SWITCH_TEMPLATE.name, False) and field_only_caps >= 1)
+            or sum(cap_passes.values()) >= FIELD_KEYCAP_MIN_PASSES
+        )
+        sandbox_signals.append(
+            "按键CHMQ="
+            + ("pass" if sandbox_confirmed else "miss")
+            + "("
+            + ",".join(f"{r.score:.2f}/{r.pixel_score:.2f}" for r in keycaps)
+            + ")"
+        )
         self._status("箱庭确认信号", "; ".join(sandbox_signals))
         if sandbox_confirmed:
             return ScreenState.SANDBOX
@@ -421,6 +469,30 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
             )
         )
         if "browndust" in loading_text:
+            return ScreenState.LOADING
+        # The game has more than one loading screen (Leo 2026-11-05 「還有轉圈圈
+        # 不能一言堂」); any of these is one, beside the logo above (4K PC
+        # clone 1080p, 2026-11-05, every saved loading frame sorted):
+        # - a scene picture with the loading ring and its percent bottom
+        #   right (镜中之战, 餐厅, 广场 entries; not dark, so only the
+        #   percent tells it);
+        # - black with 「NOW LOADING」 bottom right and no logo.
+        # Darkness alone is not one: a black screen with only the top
+        # resource bar, and the dark teleport map page, are no loading.
+        ring = ring_percent(
+            self.vision.ocr_boxes(frame, "界面分类加载圈", relative_roi=LOADING_RING_ROI)
+        )
+        if ring:
+            self._status("加载画面", f"右下加载圈 {ring}")
+            return ScreenState.LOADING
+        if "loading" in normalize_text(
+            self.vision.ocr_text(
+                frame,
+                "界面分类加载NOW LOADING",
+                relative_roi=CLASSIFY_NOW_LOADING_RELATIVE_ROI,
+            )
+        ):
+            self._status("加载画面", "右下 NOW LOADING")
             return ScreenState.LOADING
         if loading_text:
             # The loading screen and the arrival banner name the new map in
@@ -470,7 +542,7 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
                 )
             )
         )
-        if "游戏卡珍藏" in card_text or "剧情游戏卡" in card_text:
+        if self._card_menu_text(card_text):
             return ScreenState.CARD_MENU
         cooking_text = normalize_text(
             self.vision.simplify(
@@ -527,6 +599,19 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
             relative_roi=TRADE_MERCHANT_TALENTS_REGION,
         )
         return bool(talents_passed)
+
+    @staticmethod
+    def _card_menu_text(text: str) -> bool:
+        """The 游戏卡珍藏集 page, or the quick-switch bar over a field.
+
+        「剧情游戏卡」 alone is no proof: the trade shop's left column lists
+        「剧情游戏卡1..10」 too, and a buy page whose 出售 tab read 「出 工」
+        was taken for the card menu (screen library 2026-11-05).  The bar
+        shows the word in its tab row beside 「店长游戏卡」 / 「最近」.
+        """
+        if "游戏卡珍藏" in text:
+            return True
+        return "剧情游戏卡" in text and ("店长游戏卡" in text or "最近" in text)
 
     @staticmethod
     def _shop_page_text(text: str) -> bool:
@@ -832,6 +917,15 @@ class Navigator(StoryCardNavigationMixin, SandboxNavigationMixin, TradeNavigatio
         normalized = normalize_text(self.vision.simplify(text))
         matched = sum(keyword_read(value, normalized) for value in required)
         self._status(f"{name} OCR命中", f"{matched}/{len(required)}")
+        near_miss.note(
+            getattr(self.task, "log_info", None),
+            name,
+            required,
+            normalized,
+            matched,
+            len(required),
+            found=keyword_read,
+        )
         return matched == len(required), text
 
     @staticmethod

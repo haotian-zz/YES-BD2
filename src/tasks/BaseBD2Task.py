@@ -25,6 +25,7 @@ from src.utils import (
     frame_recorder,
     game_language,
     game_size,
+    game_text,
     image_io,
     keep_awake,
     known_popups,
@@ -36,6 +37,8 @@ from src.utils.frozen_screen import (
     FrozenScreen,
     FrozenWatch,
     loading_sign,
+    ring_crop,
+    ring_percent,
 )
 from src.utils.game_day import DAILY_REFRESH_HOUR
 from src.utils.home_confirmation import (
@@ -54,10 +57,11 @@ from src.utils.image_utils import (
 )
 from src.utils.ocr_utils import normalize_ocr_text
 from src.utils.press_confirm import POLL_SECONDS as LOOK_AGAIN_POLL_SECONDS
-from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS, PressOutcome
+from src.utils.press_confirm import SLOW_PC_GRACE_SECONDS, PressOutcome, wait_for
 from src.utils.press_confirm import press_and_confirm as _press_and_confirm
 from src.utils.template_resolution import offline_template_scale
 from src.utils.wait_limits import STUCK_SECONDS, scene, set_loading_reader, set_popup_closer
+from src.utils import ocr_size
 
 logger = Logger.get_logger(__name__)
 PROBE_OUTPUT_DIR = Path("probe_outputs")
@@ -71,6 +75,8 @@ RECENT_CARTRIDGE_SPECIAL_PAGE_SECONDS = 3.0
 # now stays on the point this long before the first wheel and after the last.
 SCROLL_POINTER_SETTLE_SECONDS = 0.15
 RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS = 3
+# A field battle's 逃跑 / its confirm still there this long: pressed once more.
+FLEE_REPRESS_SECONDS = 3.0
 # A popup's 确认 pressed once is still read on the next frames while the page
 # fades out; pressed again, the press lands on whatever sits under it (live 4K
 # clone 2026-10-23: 恭喜晋级's 确认 pressed twice, the second press opened the
@@ -82,6 +88,8 @@ DISMISS_SAME_SPOT = 0.04  # share of the window width/height
 FOREGROUND_ATTEMPTS = 3
 # A shortcut tap: long enough for the PC client to read it (WASD holds work live).
 KEY_TAP_SECONDS = 0.08
+# W A S D, then ← ↑ → ↓ (virtual-key codes).
+MOVE_KEY_CODES = (0x57, 0x41, 0x53, 0x44, 0x25, 0x26, 0x27, 0x28)
 # The game's own shortcuts, shown under its buttons: H 主页 in every field
 # (广场、餐厅、箱庭、镜中之战...); F on 主页 goes back to the recent
 # cartridge (Leo 「f上面是直接返回卡帶」); P in a field opens the quick switch.
@@ -178,17 +186,40 @@ def _run_watched(task, run, args, kwargs, stepped_in=False, watched=False):
     A run whose screen froze goes home; a task that is safe to run again
     (``frozen_retry``) runs once more from there, else it ends as failed and
     一键日常 goes on with the next item (Leo 2026-10-13 「可以的話就重試沒辦法
-    就下一步」).
+    就下一步」).  A run that returned False does the same (``failure_retry``,
+    by default ``frozen_retry``); the reason then names both tries.
     """
     if not watched:
         return _run_again_after_step_in(task, run, args, kwargs, stepped_in)
     from src.tasks.recovery import recover_to_home
 
     name = getattr(task, "name", "")
+    safe_again = bool(getattr(type(task), "frozen_retry", False))
+    redo_failed = getattr(type(task), "failure_retry", None)
+    redo_failed = safe_again if redo_failed is None else bool(redo_failed)
+    first_why = ""
     for attempt in (1, 2):
         task._frozen_watch = FrozenWatch()
         try:
-            return _run_again_after_step_in(task, run, args, kwargs, stepped_in)
+            result = _run_again_after_step_in(task, run, args, kwargs, stepped_in)
+            if result is not False or attempt == 2 or not redo_failed:
+                if result is False and attempt == 2 and first_why:
+                    _keep_first_why(task, first_why)
+                return result
+            # A step that could not be confirmed, even after its own
+            # remedies, ends the run: once more from 主页 before it counts as
+            # failed (Leo 2026-11-05 「你不要一個地方沒辨識到就出錯 明明有很多方法」).
+            first_why = _failure_text(task)
+            task.log_warning(
+                f"{name}：第一次没成功" + (f"（{first_why}）" if first_why else "")
+                + "，回主页再做一次。"
+            )
+            stepped_in = False
+            if not recover_to_home(task):
+                return result
+            task._why = ""
+            task.log_info(f"{name}：已回主页，再做一次。")
+            continue
         except FrozenScreen as exc:
             why = str(exc) or (
                 f"画面 {FROZEN_SCREEN_SECONDS:.0f} 秒没有变化（点了没反应或认不出画面）"
@@ -196,7 +227,7 @@ def _run_watched(task, run, args, kwargs, stepped_in=False, watched=False):
         finally:
             task._frozen_watch = None
         stepped_in = False
-        again = attempt == 1 and bool(getattr(type(task), "frozen_retry", False))
+        again = attempt == 1 and safe_again
         # Leo 2026-10-14 「那就按esc 而且要跟用戶說明是哪裡卡住觸發了這個」:
         # the step it stuck on goes in front of the reason, Esc goes first.
         where = stuck_step(task)
@@ -204,12 +235,36 @@ def _run_watched(task, run, args, kwargs, stepped_in=False, watched=False):
             why = f"卡在「{where}」：{why}"
         if _escape_when_stuck(task):
             why += "，已按 Esc"
+        if attempt == 2 and first_why and first_why != why:
+            why = f"{why}（第一次：{first_why}）"
         task._why = why
         task.log_warning(f"{name}：{why}，" + ("回主页再试一次。" if again else "回主页。"))
         if not again or not recover_to_home(task):
             return False
+        first_why = why[:80]
         task.log_info(f"{name}：已回主页，再试一次。")
     return False
+
+
+def _failure_text(task) -> str:
+    """Why a run just failed, short: its noted reason, else its 状态 line."""
+    why = str(getattr(task, "_why", "") or "").strip()
+    if not why:
+        status = str(task_info_snapshot(task).get("状态") or "").strip()
+        name = str(getattr(task, "name", "") or "")
+        if name and status.startswith(name):
+            status = status[len(name):].lstrip("：: ")
+        why = status if "失败" in status else ""
+    return why.rstrip("。.")[:80]
+
+
+def _keep_first_why(task, first_why: str) -> None:
+    """The second try failed too: the reason says both, the first is often the cause."""
+    second = _failure_text(task)
+    if second == first_why:
+        task._why = f"{second}（回主页再做一次还是一样）"
+    else:
+        task._why = f"{second}（第一次：{first_why}）" if second else f"第一次：{first_why}"
 
 
 def stuck_step(task) -> str:
@@ -341,9 +396,13 @@ class BaseBD2Task(BaseTask):
     # Tasks that begin on the home page: a run started on another page (a
     # task clicked while the bag or the square was open) goes home first.
     start_from_home = False
-    # A run stopped by a frozen screen (frozen_screen.py) runs once more from
-    # home.  Only for tasks whose second run cannot spend or dismantle twice.
+    # A run that failed, or was stopped by a frozen screen (frozen_screen.py),
+    # runs once more from home.  Only for tasks whose second run cannot spend
+    # or dismantle twice.
     frozen_retry = False
+    # A run that returned False runs once more from home too; None: as
+    # ``frozen_retry``.  False for a task that already redoes its own parts.
+    failure_retry: bool | None = None
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -383,8 +442,7 @@ class BaseBD2Task(BaseTask):
                 if constructed and (wanted or getattr(type(self), "start_from_home", False)):
                     game_size.fix_or_warn(self)
                     # A task the player started itself looks at the game's
-                    # settings first, as 一键日常 does (差異化點子 5): a reminder,
-                    # and a game set to 繁中 does not start.
+                    # settings first, as 一键日常 does (差異化點子 5): a reminder.
                     if keep and self._setup_stops():
                         scope.ended = problem_report.SETUP
                         return False
@@ -447,6 +505,14 @@ class BaseBD2Task(BaseTask):
         from src.tasks import setup_check
 
         return bool(setup_check.accounts_stop(self))
+    def fix_texts(self, detected_boxes):
+        """Every OCR result as the 简中 client's words, also on the 繁中 client
+        (Leo 2026-10-09); ok-script matches ``match=`` only after this."""
+        # The raw text says which client it is; ok-script's own fix may
+        # already simplify it (a 繁中 tool interface).
+        game_text.note_boxes(detected_boxes)
+        super().fix_texts(detected_boxes)
+        game_text.fix_boxes(detected_boxes)
 
     def _setup_stops(self) -> bool:
         from src.tasks import setup_check
@@ -579,7 +645,10 @@ class BaseBD2Task(BaseTask):
 
     def info_set(self, key, value):
         if key == "当前阶段":
-            problem_report.note_stage(self)
+            problem_report.note_stage(self, value)
+        else:
+            # What a check read, for the 问题摘要 (Leo 2026-11-05).
+            problem_report.note_read(self, key, value)
         with self._task_info_lock():
             return super().info_set(key, value)
 
@@ -637,6 +706,23 @@ class BaseBD2Task(BaseTask):
             self.save_frame(screenshot_name, frame)
         return frame
 
+    def diagnostic_frame(self):
+        """The game picture for a failure screenshot.
+
+        Taken with the stuck-screen watch resting: once the watch has fired,
+        every later look raises FrozenScreen again, so the picture of the
+        very moment it fired was lost too (player v0.2.27 2026-11-02: 「诊断截图
+        保存失败」 with no reason, right after 「画面 10 秒没有变化」).
+        """
+        watch = getattr(self, "_frozen_watch", None)
+        if watch is None:
+            return self.capture_frame()
+        watch.paused += 1
+        try:
+            return self.capture_frame()
+        finally:
+            watch.paused -= 1
+
     def save_frame(self, name: str, frame) -> Path:
         PROBE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         output_path = PROBE_OUTPUT_DIR / f"{name}.png"
@@ -661,7 +747,11 @@ class BaseBD2Task(BaseTask):
         the player's 跑商 title as 「4」 at 0.77, where v5 read nothing and the
         bordered read found 购买).  Callers that already enlarge the box
         themselves pass ``reread=False``.
+
+        Never shrunk first, whatever a caller asks (``src/utils/ocr_size.py``):
+        a frame shrunk to 720 high read 戰鬥 as 戰門.
         """
+        kwargs["target_height"] = ocr_size.READ_HEIGHT
         boxes = super().ocr(*args, **kwargs)
         if not reread or args or ocr_reread.trusted(boxes):
             return boxes
@@ -674,13 +764,21 @@ class BaseBD2Task(BaseTask):
         if now - cooldown.get(name, -1e9) < ocr_reread.REREAD_COOLDOWN_SECONDS:
             return boxes
         height, width = frame.shape[:2]
+        shorter = None  # a sure read shorter than the first one: last resort
         for attempt in ocr_reread.reread_images(frame):
             retry = dict(kwargs, frame=attempt.image, target_height=0, screenshot=False)
             found = ocr_reread.trusted(super().ocr(**retry))
-            if found:
+            if found and not ocr_reread.keeps_first_read(boxes, found):
+                shorter = shorter or (found, attempt)
+            elif found:
                 cooldown.pop(name, None)
                 logger.info(f"OCR {name}：第一次没读到，加边放大 {attempt.scale:g} 倍后读到")
                 return ocr_reread.map_back(found, attempt, width, height)
+        if shorter is not None:
+            cooldown.pop(name, None)
+            found, attempt = shorter
+            logger.info(f"OCR {name}：加边放大 {attempt.scale:g} 倍读到了，但比第一次读到的少")
+            return ocr_reread.map_back(found, attempt, width, height)
         cooldown[name] = now
         return boxes
 
@@ -929,7 +1027,18 @@ class BaseBD2Task(BaseTask):
         except Exception:
             return ""
         height, width = frame.shape[:2]
-        return loading_sign(boxes, width, height)
+        sign = loading_sign(boxes, width, height)
+        if sign:
+            return sign
+        # The ring's percent is often too small for a whole-frame read
+        # (frozen_screen.LOADING_RING_ROI): read the ring by itself too.
+        try:
+            ring = list(self.ocr(frame=ring_crop(frame), name="卡住前看载入圈", reread=False) or [])
+        except (TaskDisabledException, FinishedException):
+            raise
+        except Exception:
+            return ""
+        return ring_percent(ring)
 
     def press_dismiss(self, x: float, y: float, after_sleep: float = 1.0, label: str = "") -> bool:
         """Press a popup's closing spot (relative x, y).  False, without a
@@ -977,7 +1086,7 @@ class BaseBD2Task(BaseTask):
         if center is None:
             return False
         height, width = frame.shape[:2]
-        if not self.press_dismiss(center[0] / width, center[1] / height, 1.0, press.label):
+        if not self.press_dismiss(center[0] / width, center[1] / height, 1.0, press.label):  # 不用确认：调用方接着重看页面，弹窗还在会再关
             return False  # 刚按过：调用方接着重看页面
         self.log_info(f"{label}：画面被弹窗挡住，点击「{press.label}」关闭后再看。")
         return True
@@ -1029,24 +1138,41 @@ class BaseBD2Task(BaseTask):
             return (
                 f"按了{field_battle.ESC_PRESSES_MAX}次 Esc 都没看到「逃跑」（读到：{seen}）"
             )
-        self._click_battle_box(flee, after_sleep=1.5)
+        self._click_battle_box(flee, after_sleep=1.5)  # 不用确认：_confirm_flee 没见确认框会再点逃跑
         return self._confirm_flee(label, self._battle_boxes())
 
     def _confirm_flee(self, label: str, boxes) -> str:
-        """After 「逃跑」: press the dialog's 逃跑 (once) and wait for the map."""
+        """After 「逃跑」: press the dialog's 逃跑 and wait for the map.
+
+        A press the game dropped (the dialog, or the menu's 逃跑, still there
+        FLEE_REPRESS_SECONDS later) is pressed once more; both are harmless
+        (Leo 2026-11-02 「說了10次以上」)."""
         end_at = monotonic() + STUCK_SECONDS
-        confirmed = False
+        confirms = 0
+        flee_repressed = False
+        last_press = monotonic()
         while True:
             confirm = field_battle.flee_confirm_button(boxes)
-            if confirm is not None and not confirmed:
-                confirmed = True
-                self.log_info(f"{label}：逃跑确认框，按「{getattr(confirm, 'name', '')}」。")
-                self._click_battle_box(confirm, after_sleep=1.5)
+            waited = monotonic() - last_press >= FLEE_REPRESS_SECONDS
+            if confirm is not None and (confirms == 0 or (confirms < 2 and waited)):
+                confirms += 1
+                last_press = monotonic()
+                again = "还在，再" if confirms > 1 else ""
+                self.log_info(f"{label}：逃跑确认框{again}按「{getattr(confirm, 'name', '')}」。")
+                self._click_battle_box(confirm, after_sleep=1.5)  # 不用确认：确认框还在会再按一次
                 boxes = self._battle_boxes()
                 continue
             if not field_battle.in_battle(boxes) and field_battle.flee_button(boxes) is None:
                 self.log_info(f"{label}：已逃跑，回到地图继续。")
                 return "left"
+            flee = field_battle.flee_button(boxes)
+            if confirm is None and flee is not None and not flee_repressed and waited:
+                flee_repressed = True
+                last_press = monotonic()
+                self.log_info(f"{label}：点了「逃跑」没出确认框，再点一次。")
+                self._click_battle_box(flee, after_sleep=1.5)  # 不用确认：只补这一次
+                boxes = self._battle_boxes()
+                continue
             if monotonic() >= end_at:
                 return f"按了「逃跑」{STUCK_SECONDS:.0f}秒还在战斗画面"
             self.sleep(0.5)
@@ -1064,11 +1190,24 @@ class BaseBD2Task(BaseTask):
         self.operate_click(center[0] / width, center[1] / height, after_sleep=after_sleep)  # 不用确认：调用方接着看画面
         return True
 
-    def _press_battle_leave(self, label: str, button) -> str:
+    def _press_battle_leave(self, label: str, button) -> str:  # 会补点：离开还在再按一次
         self.log_info(f"{label}：野外战斗已结束，点击「离开」回到地图。")
-        if not self._click_battle_box(button, after_sleep=2.0):
+        if not self._click_battle_box(button, after_sleep=2.0):  # 不用确认：下面看离开还在不在
             return "战斗结算的「离开」位置读不到"
-        return "left"
+        still = {"button": None}
+
+        def gone() -> bool:
+            still["button"] = field_battle.leave_button(self._battle_boxes())
+            return still["button"] is None
+
+        if wait_for(gone, SLOW_PC_GRACE_SECONDS, sleep=self.sleep, poll=0.5):
+            return "left"
+        self.log_info(f"{label}：点了「离开」结算还在，再点一次。")
+        if not self._click_battle_box(still["button"], after_sleep=2.0):  # 不用确认：只补这一次，下面再看
+            return "战斗结算的「离开」位置读不到"
+        if wait_for(gone, SLOW_PC_GRACE_SECONDS, sleep=self.sleep, poll=0.5):
+            return "left"
+        return "点了两次「离开」，战斗结算还在"
 
     def _close_popup_in_wait(self) -> bool:
         """A page wait (wait_limits.load_wait) that has not seen its page:
@@ -1324,6 +1463,23 @@ class BaseBD2Task(BaseTask):
         self.sleep(after_sleep)
         return True
 
+    def release_move_keys(self, after_sleep: float = 0.0) -> bool:
+        """Tap each movement key (WASD and the arrows) once, so one the game
+        still holds as pressed is let go.  A movement key the game holds keeps
+        the field's top-right 主页/H and bottom P/Q row hidden and H does
+        nothing, even with the character blocked and standing still; one tap
+        of that key brings them back (4K live test 2026-11-04,
+        tmp/square-hud-1104).  The character may take a step."""
+        sent = False
+        for code in MOVE_KEY_CODES:
+            sent = self._send_game_key(code, KEY_TAP_SECONDS) or sent
+        if not sent:
+            self.log_warning("游戏窗口不在最前面，移动键没有发送。")
+            return False
+        self.info_set("快捷键", "移动键各按一下")
+        self.sleep(after_sleep)
+        return True
+
     def tap_escape(self, after_sleep: float = 0.0) -> bool:
         """Esc as the last way to close a popup that its ✕ and a blank-space
         tap did not close (Leo 2026-10-12 「關不掉 就按ESC做備案」).  Callers
@@ -1512,7 +1668,7 @@ class BaseBD2Task(BaseTask):
             return False
         self.info_set("当前阶段", "寻找快速切换按钮")
         quick_switch_opened = click_quick_switch()
-        if not quick_switch_opened and self._press_field_quick_switch_by_keycaps():
+        if not quick_switch_opened and self._press_field_quick_switch_by_keycaps():  # 不用确认：本身就是补救（按键打开快速切换）
             quick_switch_opened = True
         if not quick_switch_opened:
             special_pages = self._handle_recent_cartridge_special_pages(
@@ -1764,7 +1920,7 @@ class BaseBD2Task(BaseTask):
         The frame is also what the 问题摘要 shows if this run fails.
         """
         try:
-            frame = self.capture_frame()
+            frame = self.diagnostic_frame()
             problem_report.note_give_up(self, frame)
             self.save_frame(name, frame)
         except (TaskDisabledException, FinishedException):
@@ -1886,6 +2042,12 @@ class BaseBD2Task(BaseTask):
         """
         end_at = monotonic() + max(0.0, float(timeout))
         handled: set[str] = set()
+        # A page still there after its press gets one more (the game dropped
+        # it; Leo 2026-11-02 「說了10次以上」), not counted as a new page.
+        presses: dict[str, int] = {}
+        # When each page was pressed, stamped by the loop's own clock read.
+        pressed_at: dict[str, float | None] = {}
+        last_now: float | None = None
         action_count = 0
         reward_pending: str | None = None
         reward_clear_frames = 0
@@ -1924,29 +2086,50 @@ class BaseBD2Task(BaseTask):
 
             if (
                 action_name
-                and action_name not in handled
+                and (
+                    action_name not in presses
+                    or (
+                        presses[action_name] < 2
+                        and last_now is not None
+                        and pressed_at.get(action_name) is not None
+                        and last_now - pressed_at[action_name] >= DISMISS_REPRESS_SECONDS
+                    )
+                )
                 and target_box is not None
-                and action_count < RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS
+                and (
+                    action_name in handled
+                    or action_count < RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS
+                )
             ):
                 point = self._ocr_box_center(target_box)
                 if point is not None:
                     frame_width = max(1, int(self.width))
                     frame_height = max(1, int(self.height))
                     self.info_set("当前阶段", f"处理最近卡带{action_name}")
-                    pressed = self.press_dismiss(
+                    if presses.get(action_name):
+                        # press_dismiss waits out the page's fade first.
+                        self.info_set("最近卡带特殊页面", f"{action_name}点了还在，再点一次")
+                    pressed = self.press_dismiss(  # 不用确认：页面还在会再点一次（最多两次）
                         max(0.0, min(1.0, point[0] / frame_width)),
                         max(0.0, min(1.0, point[1] / frame_height)),
                         0.5,
                         action_name,
                     )
                 if point is not None and pressed:
+                    presses[action_name] = presses.get(action_name, 0) + 1
+                    pressed_at[action_name] = None
+                    if action_name not in handled:
+                        action_count += 1
                     handled.add(action_name)
-                    action_count += 1
                     if action_name in (FIEND_HUNT_REWARD_TITLE, GOLDEN_ARENA_REWARD_TITLE):
                         end_at = max(end_at, monotonic() + max(0.0, float(timeout)))
 
+            last_now = monotonic()
+            for name, at in pressed_at.items():
+                if at is None:
+                    pressed_at[name] = last_now
             if (
-                monotonic() >= end_at
+                last_now >= end_at
                 or (
                     action_count >= RECENT_CARTRIDGE_SPECIAL_PAGE_MAX_ACTIONS
                     and not reward_pending
@@ -2031,7 +2214,7 @@ class BaseBD2Task(BaseTask):
             boxes = self.ocr(
                 frame=frame,
                 threshold=threshold,
-                target_height=720,
+                target_height=ocr_size.READ_HEIGHT,
                 log=False,
                 name=name,
             )

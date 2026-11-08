@@ -46,6 +46,20 @@ FRAME_CHANGE_MIN_DIFF = 8.0
 BACK_BUTTON_POINT = (150 / REFERENCE_WIDTH, 50 / REFERENCE_HEIGHT)
 # Home presses in the square before falling back to back/H/Esc.
 SQUARE_HOME_PRESSES_MAX = 2
+# In a field (广场, 箱庭) the top-left spot holds the channel button
+# 「Ch.137」 instead of a back arrow: a press there opens 选择频道 (player
+# v0.2.29 2026-11-03, square buttons hidden after the goddess wish: back
+# opened it, 取消 closed it, eight times, and H never got its turn).
+CHANNEL_BUTTON_RELATIVE_ROI = (0.0, 0.0, 320 / REFERENCE_WIDTH, 95 / REFERENCE_HEIGHT)
+# 1 read as l/I/| and 0 as O are common small-text misreads; one real digit
+# is still needed.
+CHANNEL_BUTTON_TEXT = re.compile(r"^c[hn][.,·:]?(?=[\dIl|Oo]*\d)[\dIl|Oo]{1,4}", re.IGNORECASE)
+# Second cue (any one of them is enough): the dialog that press opens.  Its
+# title 「选择频道」, 「当前频道」 at its top right, or a grid of 「Ch.<n>」
+# buttons.  One misread of the button itself must not start the loop of
+# back press → 选择频道 → 取消 again (player report 2026-11-06, 桌面分身).
+CHANNEL_DIALOG_WORDS = ("选择频道", "選擇頻道", "当前频道", "當前頻道")
+CHANNEL_DIALOG_MIN_BUTTONS = 3
 # Loading between pages is black with a faint logo (p99 grey ~40 live);
 # every real page has bright UI text.
 TRANSITION_P99_MAX = 70.0
@@ -112,8 +126,9 @@ def _handle_dialog(task, vision: Vision) -> str:
         # it changed the player's settings (bd2 session 2026-10-22).
         return "none"
     press = known_popups.pick(boxes, allow_cancel=True)
+    channel_dialog = _channel_dialog(boxes)
     if press is None:
-        return "none"
+        return "channel" if channel_dialog and _close_channel_dialog(task) else "none"
     if press.key == known_popups.ESC_LABEL:
         tap_escape = getattr(task, "tap_escape", None)
         if not callable(tap_escape):
@@ -124,12 +139,39 @@ def _handle_dialog(task, vision: Vision) -> str:
     if center is None:
         return "none"
     quit_dialog = known_popups.is_quit_dialog(boxes)
+    error = known_popups.server_error(boxes)
     if quit_dialog:
         task.log_info("恢复主页：游戏问要不要关闭游戏，点击「取消」，不再按 Esc。")
+    elif error is not None:
+        task.log_warning(
+            f"恢复主页：{known_popups.server_error_note(error)}，点击「确认」关闭。",
+            notify=True,
+        )
     else:
         task.log_info(f"恢复主页：点击「{press.label}」关闭弹窗。")
     task.operate_click(center[0] / width, center[1] / height, after_sleep=1.0)
-    return "quit" if quit_dialog else "dismissed"
+    if quit_dialog:
+        return "quit"
+    return "channel" if channel_dialog else "dismissed"
+
+
+def _channel_dialog(boxes) -> bool:
+    """The game's 选择频道 dialog: its title or 当前频道, or several 「Ch.<n>」
+    buttons."""
+    texts = [re.sub(r"\s+", "", str(getattr(box, "name", ""))) for box in boxes]
+    joined = "".join(texts)
+    if any(word in joined for word in CHANNEL_DIALOG_WORDS):
+        return True
+    return sum(1 for text in texts if CHANNEL_BUTTON_TEXT.match(text)) >= CHANNEL_DIALOG_MIN_BUTTONS
+
+
+def _close_channel_dialog(task) -> bool:
+    """取消 unread on the 选择频道 dialog: Esc closes it (harmless)."""
+    tap_escape = getattr(task, "tap_escape", None)
+    if not callable(tap_escape):
+        return False
+    task.log_info("恢复主页：选择频道的「取消」没读到，按 Esc 关掉。")
+    return bool(tap_escape(after_sleep=1.0))
 
 
 def _rearm_auto_login(task) -> bool:
@@ -281,17 +323,45 @@ def recover_to_home(task, attempts: int = RECOVERY_ATTEMPTS) -> bool:
     if watch is None:
         return _recover_to_home(task, attempts)
     watch.paused += 1
+    home = False
     try:
-        return _recover_to_home(task, attempts)
+        home = _recover_to_home(task, attempts)
+        return home
     finally:
         watch.paused -= 1
         watch.pressed()
+        if home:
+            # Home reached: a stuck screen caught earlier as a plain error is
+            # over.  Left fired, the next look raised it again and the step
+            # run from home failed at once (player v0.2.27 2026-11-02, 料理).
+            watch.fired = False
+            watch.loading_hold = False
+
+
+def channel_button_at_back(vision, frame) -> bool:
+    """The field's channel button 「Ch.<n>」 sits where the back arrow is
+    pressed."""
+    try:
+        boxes = vision.ocr_boxes(
+            frame, "恢复主页频道按钮", relative_roi=CHANNEL_BUTTON_RELATIVE_ROI
+        )
+    except (TaskDisabledException, FinishedException):
+        raise
+    except Exception:
+        return False
+    return any(
+        CHANNEL_BUTTON_TEXT.match(re.sub(r"\s+", "", str(getattr(box, "name", ""))))
+        for box in boxes
+    )
 
 
 def _recover_to_home(task, attempts: int) -> bool:
     vision = Vision(task)
     navigator = Navigator(task, vision)
     task._recovery_saw_title = False
+    task._recovery_why = ""
+    channel_seen = False
+    keys_released = False
     home_key_pressed = False
     back_did_nothing = False
     back_moved = 0
@@ -338,6 +408,18 @@ def _recover_to_home(task, attempts: int) -> bool:
             escape_stopped = True
             continue
         if outcome == "dismissed":
+            continue
+        if outcome == "channel":
+            # The top-left press opened 选择频道: that spot is the channel
+            # button, whatever its own read said.  Never press it again.
+            if not channel_seen:
+                task.log_info("恢复主页：左上角点开了选择频道，那里是频道按钮，不再点它，改按 H 和 Esc。")
+            channel_seen = True
+            back_did_nothing = True
+            if home_key_pressed and not keys_released:
+                # H went before the channel was known: once more after the
+                # movement keys are let go.
+                home_key_pressed = False
             continue
         if outcome == "battle":
             leave = getattr(task, "leave_field_battle", None)
@@ -386,6 +468,21 @@ def _recover_to_home(task, attempts: int) -> bool:
             # 餐厅...): the game's own H once (Leo 2026-10-11 「在餐廳也可以按
             # H回主頁」「凡事總要有備用方案 不要失敗就卡死」).
             home_key_pressed = True
+            release = getattr(task, "release_move_keys", None)
+            if callable(release):
+                # A field with its 主页/H hidden: a movement key the game
+                # still holds keeps it so and H does nothing (4K live test
+                # 2026-11-04, player v0.2.29 frames look the same).  Not
+                # tied to the 「Ch.」 read: with W held the game ignores
+                # clicks too, so 选择频道 never opens to say so (4K 桌面分身
+                # 2026-11-06).  A tap of each is harmless elsewhere.
+                task.log_info(
+                    "恢复主页：场景上方的主页按钮被收起来了，先把移动键各按一下放开。"
+                    if channel_seen
+                    else "恢复主页：按 H 前先把移动键各按一下放开（被按住时 H 没反应）。"
+                )
+                release(after_sleep=0.5)
+                keys_released = True
             task.log_info("恢复主页：返回没回到主页，改按快捷键 H。")
             if task.tap_key(HOME_KEY, after_sleep=0.5) and _wait_after_back(
                 task, navigator, frame
@@ -408,6 +505,15 @@ def _recover_to_home(task, attempts: int) -> bool:
                 return True
             back_did_nothing = False
             continue
+        if channel_seen or channel_button_at_back(vision, frame):
+            # Not a back arrow: the field's channel button.  H, then Esc.
+            # Once seen (its read or the dialog it opened) it stays so: a
+            # later misread must not press it again.
+            if not channel_seen:
+                task.log_info("恢复主页：左上角是频道按钮（在广场等场景里），不点它，改按 H 和 Esc。")
+            channel_seen = True
+            back_did_nothing = True
+            continue
         task.log_info("恢复主页：点击左上角返回。")
         task.operate_click(*BACK_BUTTON_POINT, after_sleep=0.5)
         # Live 2026-09-27: a fixed 1.5 s sleep plus a full classification per
@@ -421,6 +527,9 @@ def _recover_to_home(task, attempts: int) -> bool:
             back_moved += 1
     if navigator.classify() == ScreenState.HOME:
         return True
+    if channel_seen:
+        task._recovery_why = "还在广场之类的场景里，画面上方的主页按钮没有出现，放开移动键、按 H 和 Esc 也没回到主页"
+        task.log_warning(f"恢复主页：{task._recovery_why}。", notify=True)
     _keep_failure_picture(task, navigator)
     return False
 

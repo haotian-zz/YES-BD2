@@ -36,9 +36,16 @@ TRADE_STATES = {
     "field": ScreenState.SANDBOX,
     # Parts of the field's HUD on black: still named the field.
     "part_field": ScreenState.SANDBOX,
+    # "part_quick_switch_button": the bottom button strip alone on black
+    # (quick-switch button, no key cap) is UNKNOWN.  The button alone is no
+    # proof of the field: the restaurant's business screen shows it too and
+    # was taken for the field (3 player frames, screen library 2026-11-05).
     # The minimap's ≡ menu, open over the field.
     "field_nav_menu": ScreenState.SANDBOX,
     "merchant_menu": ScreenState.MERCHANT_DIALOG,
+    # The discount shop's 购买 page (a player's 1080p frame, 2026-11-02):
+    # 跑商 presses its back once more, then Esc, only while it reads SHOP.
+    "shop": ScreenState.SHOP,
     # The 价目表 opens over the shop's sell page.
     "price_list": ScreenState.SHOP,
     "teleport_map": ScreenState.AREA_MAP,
@@ -84,7 +91,50 @@ CHECKS = {
         lambda nav, frame: known_popups.is_battle_menu(nav.task.ocr(frame=frame)),
         {"battle_pause_menu"},
     ),
+    # Only its lone 确认 is pressed (「当前并非赛季。，error:100019」 over a
+    # 镜中之战 battle, player report v0.2.26 2026-11-01 23:00).
+    "服务器提示": (
+        lambda nav, frame: known_popups.server_error(nav.task.ocr(frame=frame)) is not None,
+        {"server_error"},
+    ),
+    # 白嫖抽抽乐 presses back once more, then Esc, then the arrow, only while
+    # the draw result reads (player 2026-11-02: one back press did nothing).
+    # Recovery never presses its top-left back there: the field's 「Ch.<n>」
+    # opens 选择频道 (player v0.2.29 2026-11-03, square buttons hidden).
+    "频道按钮": (
+        lambda nav, frame: _channel_button(nav, frame),
+        {"field_nav_menu", "square_hud_hidden"},
+    ),
+    # The dialog that button opens is the second cue: recovery never
+    # presses the top-left spot again once it shows (player report
+    # 2026-11-06, 桌面分身).
+    "选择频道弹窗": (
+        lambda nav, frame: _channel_dialog(nav, frame),
+        {"square_hud_hidden"},
+    ),
+    "抽卡结果页": (
+        lambda nav, frame: _gacha_result(nav, frame),
+        {"gacha_result"},
+    ),
 }
+
+
+def _channel_button(nav, frame):
+    from src.tasks.recovery import channel_button_at_back
+
+    return channel_button_at_back(nav.vision, frame)
+
+
+def _channel_dialog(nav, frame):
+    from src.tasks.recovery import _channel_dialog
+
+    return _channel_dialog(nav.task.ocr(frame=frame))
+
+
+def _gacha_result(nav, frame):
+    from src.tasks.FreeGachaTask import gacha_result_page
+
+    return gacha_result_page(" ".join(box.name for box in nav.task.ocr(frame=frame)))
 
 
 def _trader(nav):

@@ -9,10 +9,8 @@ from src.tasks.EventRewardTask import (
     BADGE_STRIP,
     CURRENCY_ROI,
     DIALOG_ROI,
-    DIAMOND_TEMPLATE,
     PANEL_ROI,
     button_lit,
-    diamond_icon,
     find_badges,
     list_view,
     views_match,
@@ -91,19 +89,6 @@ class RedShareTest(unittest.TestCase):
         self.assertEqual(red_share(_frame(), (0, 0, 40, 40)), 0.0)
 
 
-class DiamondIconTest(unittest.TestCase):
-    def test_gem_in_the_currency_bar_is_found(self):
-        gem = cv2.imread(str(DIAMOND_TEMPLATE))
-        frame = _frame()
-        gh, gw = gem.shape[:2]
-        frame[41 : 41 + gh, 1461 : 1461 + gw] = gem  # where 满月 shows it
-        self.assertTrue(diamond_icon(frame, (CURRENCY_ROI,)))
-        self.assertFalse(diamond_icon(frame, (DIALOG_ROI,)))
-
-    def test_plain_frame_has_no_gem(self):
-        self.assertFalse(diamond_icon(_frame(), (PANEL_ROI, CURRENCY_ROI, DIALOG_ROI)))
-
-
 if __name__ == "__main__":
     unittest.main()
 
@@ -119,8 +104,8 @@ class TokenCountTest(unittest.TestCase):
         self.assertIsNone(parse_token_count(""))
 
 
-class DiamondRecheckTest(unittest.TestCase):
-    """The 钻石 check runs again on the frame of every press."""
+class PaidRecheckTest(unittest.TestCase):
+    """The 付费 check runs again on the frame of every press."""
 
     def _task(self, diamond_checks):
         from src.tasks.EventRewardTask import EventRewardTask
@@ -130,12 +115,12 @@ class DiamondRecheckTest(unittest.TestCase):
         task.info_set = lambda *a, **k: None
         task.log_info = lambda *a, **k: None
         task._reference_boxes = lambda *a: []
-        task._diamonds_now = lambda *_a: diamond_checks.pop(0)
+        task._paid_now = lambda *_a: diamond_checks.pop(0)
         task._click_reference_box = lambda *a, **k: self.fail("pressed on a paid page")
         return task
 
     def test_paid_page_presses_nothing(self):
-        self.assertFalse(self._task([True])._press_what_is_lit("钻石"))
+        self.assertFalse(self._task([True])._press_what_is_lit("付费"))
 
 
 class ListBottomTest(unittest.TestCase):
@@ -163,7 +148,7 @@ class PressWhatIsLitTest(unittest.TestCase):
         task.capture_frame = lambda: frames[0]
         task.info_set = lambda *a, **k: None
         task.log_info = lambda *a, **k: None
-        task._diamonds_now = lambda *_a: False
+        task._paid_now = lambda *_a: False
         task._reference_boxes = lambda *a: boxes
         task._hand_points = lambda *_a: []
 
@@ -363,7 +348,7 @@ class BadgesLeftTest(unittest.TestCase):
         task = self._page_task([_box("付费钻石兑换所", 700, 300, w=200)])
         task._page_skip_why = ""
         self.assertFalse(task._handle_page("满月兑换所"))
-        self.assertEqual("有钻石，不碰", task._page_skip_why)
+        self.assertEqual("付费页面，不碰", task._page_skip_why)
 
     def _sweep_task(self, handle):
         from src.tasks.EventRewardTask import EventRewardTask
@@ -398,6 +383,36 @@ class BadgesLeftTest(unittest.TestCase):
         skipped = {}
         self.assertEqual(0, task._sweep_list(skipped))
         self.assertEqual({"拼图活动": "有钻石，不碰"}, skipped)
+
+    def test_an_event_that_did_not_open_is_pressed_once_more(self):
+        # Leo 2026-11-05 「所有地方都要有補救方案」: a card press the game
+        # did not take showed no known button, and the event was skipped.
+        from src.tasks.EventRewardTask import NO_KNOWN_BUTTON
+
+        def first_not_open(task):
+            if state["opened"] == 1:
+                task._page_skip_why = NO_KNOWN_BUTTON
+                return False
+            return True
+
+        task, state = self._sweep_task(first_not_open)
+        skipped = {}
+        task._sweep_list(skipped)
+        self.assertEqual(2, state["opened"])
+        self.assertNotEqual(NO_KNOWN_BUTTON, skipped.get("拼图活动"))
+
+    def test_an_event_with_no_known_button_twice_is_left(self):
+        from src.tasks.EventRewardTask import NO_KNOWN_BUTTON
+
+        def never_open(task):
+            task._page_skip_why = NO_KNOWN_BUTTON
+            return False
+
+        task, state = self._sweep_task(never_open)
+        skipped = {}
+        task._sweep_list(skipped)
+        self.assertEqual(2, state["opened"])
+        self.assertEqual({"拼图活动": NO_KNOWN_BUTTON}, skipped)
 
     def test_a_badge_still_there_after_two_claims(self):
         task, state = self._sweep_task(lambda _task: True)

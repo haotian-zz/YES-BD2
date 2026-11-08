@@ -73,6 +73,7 @@ from src.utils.wait_limits import (
     load_wait,
     scene_at_press,
 )
+from src.utils import ocr_size
 
 REFERENCE_WIDTH = FHD_1080.width
 REFERENCE_HEIGHT = FHD_1080.height
@@ -124,12 +125,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = PROJECT_ROOT / "recognition-assets" / "template-assets"
 
 
+def home_fail_why(task) -> str:
+    """Why the shared way home gave up, for the status line."""
+    why = str(getattr(task, "_recovery_why", "") or "")
+    return f"：{why}" if why else ""
+
+
 class SquareGoddessTask(BaseBD2Task):
     recover_home_on_failure = True
     start_from_home = True
     frozen_retry = True
     status_keys = [
-        "启用",
         "状态",
         "当前阶段",
         "主页抽抽乐 OCR 尝试",
@@ -174,7 +180,6 @@ class SquareGoddessTask(BaseBD2Task):
         self._match_pause_until = 0.0
         self.default_config.update(
             {
-                "启用": True,
                 "主页压暗阈值": HOME_DIMMED_P95_THRESHOLD_DEFAULT,
                 "主页确认等待秒数": 10.0,
                 "快速卡带等待秒数": 10.0,
@@ -230,11 +235,6 @@ class SquareGoddessTask(BaseBD2Task):
             pass
 
     def run(self):
-        if not bool(self.config.get("启用", True)):
-            self.info_set("状态", "广场女神像已禁用。")
-            self.log_info("广场女神像已禁用。")
-            return True
-
         self.done_already_note = ""
         self.info_set("状态", "广场女神像启动。")
         self.log_info("广场女神像：开始从主页进入梦幻广场。")
@@ -260,7 +260,7 @@ class SquareGoddessTask(BaseBD2Task):
             self.info_set("状态", "今天已许愿，跳过。")
             self._status_set("女神像许愿结果", "今天已许愿")
             if not self._return_home_from_square():
-                self.info_set("状态", "广场女神像失败：今天已许愿，但未能返回主页。")
+                self.info_set("状态", f"广场女神像失败：今天已许愿，但未能返回主页{home_fail_why(self)}。")
                 return False
             self.info_set("状态", "今天已许愿，跳过并返回主页。")
             self.log_completion("广场女神像：今天已经许愿过，跳过并返回主页。")
@@ -268,7 +268,7 @@ class SquareGoddessTask(BaseBD2Task):
         self.info_set("状态", "女神像许愿完成。")
         self._status_set("女神像许愿结果", "完成")
         if not self._return_home_from_square():
-            self.info_set("状态", "广场女神像失败：许愿完成，但未能返回主页。")
+            self.info_set("状态", f"广场女神像失败：许愿完成，但未能返回主页{home_fail_why(self)}。")
             return False
         self.info_set("状态", "女神像许愿完成并返回主页。")
         self.log_completion("广场女神像：许愿完成并返回主页。")
@@ -336,7 +336,7 @@ class SquareGoddessTask(BaseBD2Task):
         self.info_set("当前阶段", "打开卡带快速切换")
         if not self.open_cartridge_quick_switcher(
             ensure_home=self._wait_for_cartridge_home,
-            click_quick_switch=lambda: self._click_template_until(
+            click_quick_switch=lambda: self._click_template_until(  # 不用确认：open_cartridge_quick_switcher 页面没出来会用下面的 repress 重按
                 QUICK_SWITCH_TEMPLATE,
                 timeout=float(self.config.get("快速卡带等待秒数", 10.0)),
                 name="快速切换按钮",
@@ -347,7 +347,7 @@ class SquareGoddessTask(BaseBD2Task):
             quick_switch_page_shown=lambda seconds: self._wait_for_quick_switch_page(
                 timeout=seconds, quiet=True
             ),
-            repress_quick_switch=lambda: self._click_template_until(
+            repress_quick_switch=lambda: self._click_template_until(  # 不用确认：这就是重按
                 QUICK_SWITCH_TEMPLATE,
                 timeout=QUICK_SWITCH_REPRESS_LOOK_SECONDS,
                 name="快速切换按钮",
@@ -363,6 +363,7 @@ class SquareGoddessTask(BaseBD2Task):
 
         self.info_set("当前阶段", "选择生活玩法游戏卡带")
         self.sleep(0.5)
+        seen_card = None
         # 类别点击被吞时高亮不会变：仅在卡带选择页仍在、类别仍未高亮时重点（同末日之书）。
         for attempt in range(1, SQUARE_CLICK_VERIFY_ATTEMPTS + 1):
             self.operate_click(*LIFE_GAMEPLAY_CATEGORY_POINT, after_sleep=0.0)
@@ -371,13 +372,22 @@ class SquareGoddessTask(BaseBD2Task):
             if attempt >= SQUARE_CLICK_VERIFY_ATTEMPTS or not self._quick_switch_still_shows(
                 highlighted=False, seconds=1.0
             ):
-                self.log_info("广场女神像：点击后未确认生活玩法游戏卡带类别高亮。")
+                # The highlight is one way to see the category opened; the
+                # square card's own picture in its row is another (Leo
+                # 2026-11-05 「你不要一個地方沒辨識到就出錯 明明有很多方法」).
+                # Only the card's picture: a blind slot press is never made
+                # in a row not known to be 生活玩法.
+                seen_card = self._find_square_card()
+                if seen_card is not None:
+                    self.log_info("广场女神像：生活玩法类别高亮没确认到，但广场卡带的图已经在画面上，继续。")
+                    break
+                self.log_info("广场女神像：点击后未确认生活玩法游戏卡带类别高亮，也没看到广场卡带的图。")
                 return False, None
             self.log_info(f"广场女神像：第{attempt}次点击生活玩法类别未生效，重试。")
 
         self.info_set("当前阶段", "选择广场卡带")
         self.sleep(FIXED_CARTRIDGE_SLOT_PRE_CLICK_DELAY_SECONDS)
-        slot = self._find_square_card()
+        slot = seen_card or self._find_square_card()
         by_picture = slot is not None
         if not by_picture:
             slot = blind_slots.pop(0)
@@ -658,7 +668,7 @@ class SquareGoddessTask(BaseBD2Task):
         self._click_square_notice_if_present()
 
         self.info_set("当前阶段", "检查女神像每日导航")
-        navigation_result = self._click_goddess_daily_navigation_until(
+        navigation_result = self._click_goddess_daily_navigation_until(  # 不用确认：下面许愿等待里提示不出来会重点导航、按 E
             timeout=float(self.config.get("女神像导航入口等待秒数", 8.0))
         )
         if navigation_result != GODDESS_NAVIGATION_CLICKED and self._prayer_prompt_steady():
@@ -677,7 +687,7 @@ class SquareGoddessTask(BaseBD2Task):
         if navigation_result != GODDESS_NAVIGATION_CLICKED and self._walk_by_key():
             navigation_result = GODDESS_NAVIGATION_CLICKED
         if navigation_result != GODDESS_NAVIGATION_CLICKED and (
-            self._press_row_where_it_usually_is()
+            self._press_row_where_it_usually_is()  # 不用确认：本身就是补救（按平常位置）
         ):
             navigation_result = GODDESS_NAVIGATION_CLICKED
         if navigation_result != GODDESS_NAVIGATION_CLICKED and row_absent and (
@@ -782,7 +792,7 @@ class SquareGoddessTask(BaseBD2Task):
         height, width = frame.shape[:2]
         x, y = GODDESS_ROW_USUAL_POINT
         self.log_info("广场女神像：每日导航读不到，照它平常的位置点一下。")
-        self._click_client(round(x * width), round(y * height), width, height, after_sleep=1.0)
+        self._click_client(round(x * width), round(y * height), width, height, after_sleep=1.0)  # 不用确认：helper 本身就是补救
         if self._walk_or_prompt_within(GODDESS_ROW_PRESS_CONFIRM_SECONDS):
             self.log_info("广场女神像：点了以后开始走向女神像了。")
             return True
@@ -812,7 +822,7 @@ class SquareGoddessTask(BaseBD2Task):
             if nav is not None and previous is not None:
                 tolerance = max(nav.height, previous.height)
                 if all(abs(a - b) <= tolerance for a, b in zip(nav.center, previous.center)):
-                    self._click_client(*nav.center, frame.shape[1], frame.shape[0], after_sleep=2.0)
+                    self._click_client(*nav.center, frame.shape[1], frame.shape[0], after_sleep=2.0)  # 不用确认：helper 本身，调用处检查
                     return GODDESS_NAVIGATION_CLICKED
             previous = nav
             self.sleep(interval)
@@ -880,7 +890,7 @@ class SquareGoddessTask(BaseBD2Task):
                     continue
                 self.log_info(f"{stuck}，已按掉自动移动，重新点每日导航。")
                 renav_left -= 1
-                navigation = self._click_goddess_daily_navigation_until(
+                navigation = self._click_goddess_daily_navigation_until(  # 不用确认：这就是重点导航
                     timeout=float(self.config.get("女神像导航入口等待秒数", 8.0))
                 )
                 if navigation != GODDESS_NAVIGATION_CLICKED:
@@ -892,7 +902,7 @@ class SquareGoddessTask(BaseBD2Task):
             walk_still.reset()
 
             if point is not None and click_count < max_clicks:
-                self._click_client(
+                self._click_client(  # 不用确认：循环里提示还在就再按，最多 女神像许愿最多点击次数
                     point[0],
                     point[1],
                     frame_width,
@@ -950,7 +960,7 @@ class SquareGoddessTask(BaseBD2Task):
                     if observation.navigation is not None:
                         renav_left -= 1
                         self.log_info("广场女神像：许愿提示迟迟未出现，补点每日导航。")
-                        self._click_client(
+                        self._click_client(  # 不用确认：这就是补点导航
                             *observation.navigation.center,
                             frame_width,
                             frame_height,
@@ -1110,7 +1120,7 @@ class SquareGoddessTask(BaseBD2Task):
                 )
                 x = center_x + offset_x
                 y = center_y + offset_y
-                self._click_client(x, y, frame_width, frame_height, after_sleep=after_sleep)
+                self._click_client(x, y, frame_width, frame_height, after_sleep=after_sleep)  # 不用确认：helper 本身，调用处检查
                 return True
             self.sleep(interval)
 
@@ -1323,7 +1333,7 @@ class SquareGoddessTask(BaseBD2Task):
             return self.ocr(
                 frame=ocr_frame,
                 threshold=float(self.config.get("广场 OCR 阈值", 0.2)),
-                target_height=720,
+                target_height=ocr_size.READ_HEIGHT,
                 log=False,
                 name=name,
                 reread=ocr_scale == 1.0,

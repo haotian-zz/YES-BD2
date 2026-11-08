@@ -8,6 +8,7 @@ from unittest.mock import patch
 import numpy as np
 from ok.util.config import Config
 
+from src.tasks import business_entry
 from src.tasks.BaseBD2Task import RECOGNITION_SETTLE_SECONDS
 from src.tasks.DailyTask import (
     BUSINESS_COLLECT_KEYWORDS,
@@ -60,6 +61,9 @@ from src.tasks.task_vision_mixin import (
 from src.utils.image_utils import crop_relative
 
 
+
+ENTRY = business_entry.ENTRY_POINT
+
 class DailyTaskHelperTest(unittest.TestCase):
     def test_daily_task_is_renamed_and_has_no_quick_hunt_configuration(self):
         task = object.__new__(DailyTask)
@@ -86,7 +90,7 @@ class DailyTaskHelperTest(unittest.TestCase):
         self.assertNotIn("执行公会签到", task.default_config)
         self.assertNotIn("执行快速狩猎", task.default_config)
         self.assertNotIn("快速狩猎圣石属性", task.default_config)
-        self.assertTrue(task.default_config["启用"])
+        self.assertNotIn("启用", task.default_config)  # Leo 2026-11-05 「直接移除他」
         self.assertIn("快速狩猎 OCR 阈值", task.default_config)
         self.assertNotIn("快速狩猎章节图", task.default_config)
 
@@ -96,9 +100,8 @@ class DailyTaskHelperTest(unittest.TestCase):
             "快速狩猎圣石测试",
             "快速狩猎完整测试",
         )
-        visible_keys = task.config_type["启用"]["sub_configs"][True]
+        visible_keys = list(task.default_config)
         for key in (
-            "识别后等待秒数",
             "金币双倍时",
             "史莱姆双倍时",
             "都双倍时",
@@ -187,7 +190,7 @@ class DailyTaskHelperTest(unittest.TestCase):
         )
 
         self.assertTrue(modified)
-        self.assertTrue(hydrated_config["启用"])
+        self.assertNotIn("启用", hydrated_config)
         self.assertNotIn("快速狩猎章节图", hydrated_config)
         # A saved switch from before 2026-10-04 is dropped, not obeyed.
         self.assertNotIn("快速狩猎狩猎场", hydrated_config)
@@ -1165,7 +1168,7 @@ class DailyTaskHelperTest(unittest.TestCase):
         )
 
         self.assertTrue(DailyTask.run_business_collect(task))
-        self.assertEqual([(165, 260)], reference_clicks)
+        self.assertEqual([ENTRY], reference_clicks)
         self.assertEqual([(1090, 900), (960, 1000), (832, 900)], clicks)
 
     def test_business_collect_unread_claim_is_pressed_in_the_cancel_row(self):
@@ -1180,7 +1183,7 @@ class DailyTaskHelperTest(unittest.TestCase):
         self.addCleanup(recheck.stop)
 
         self.assertTrue(DailyTask.run_business_collect(task))
-        self.assertEqual([(165, 260)], reference_clicks)
+        self.assertEqual([ENTRY], reference_clicks)
         self.assertEqual((1090, 760), clicks[0])
 
     def test_business_collect_waits_for_a_claim_button_that_fades_in(self):
@@ -1201,7 +1204,7 @@ class DailyTaskHelperTest(unittest.TestCase):
 
         self.assertTrue(DailyTask.run_business_collect(task))
         self.assertEqual((1090, 814), clicks[0])
-        self.assertEqual([(165, 260)], reference_clicks[:1])
+        self.assertEqual([ENTRY], reference_clicks[:1])
         self.assertEqual("按钮是灰的", statuses["一键收菜结果"])
 
     def test_business_collect_unread_lit_spot_without_reward_is_not_done(self):
@@ -1221,7 +1224,11 @@ class DailyTaskHelperTest(unittest.TestCase):
         task._home_still_showing = lambda *_args: True
 
         self.assertFalse(DailyTask.run_business_collect(task))
-        self.assertEqual([(165, 260), (165, 260)], reference_clicks)
+        # Then the 「经营管理」 word under the icon (player 2026-11-01).
+        self.assertEqual(
+            [ENTRY, ENTRY, business_entry.LABEL_POINT],
+            reference_clicks,
+        )
 
     def test_business_collect_is_not_pressed_again_once_home_is_gone(self):
         task, reference_clicks, _clicks = self._business_task([])
@@ -1229,14 +1236,14 @@ class DailyTaskHelperTest(unittest.TestCase):
         task._home_still_showing = lambda *_args: False
 
         self.assertFalse(DailyTask.run_business_collect(task))
-        self.assertEqual([(165, 260)], reference_clicks)
+        self.assertEqual([ENTRY], reference_clicks)
 
     def test_business_collect_skips_when_popup_is_not_found(self):
         task, reference_clicks, clicks = self._business_task([])
         task.config = {"一键收菜菜单等待秒数": 0.0}
 
         self.assertFalse(DailyTask.run_business_collect(task))
-        self.assertEqual([(165, 260)], reference_clicks)
+        self.assertEqual([ENTRY], reference_clicks)
         self.assertEqual([], clicks)
 
     def test_business_collect_limits_blind_taps_on_unknown_overlay(self):
@@ -1248,7 +1255,7 @@ class DailyTaskHelperTest(unittest.TestCase):
         # No reward overlay was read, so the claim is not counted.
         self.assertFalse(DailyTask.run_business_collect(task))
         self.assertEqual([(1090, 814)], clicks)
-        self.assertEqual([(165, 260), (832, 814), (832, 814)], reference_clicks)
+        self.assertEqual([ENTRY, (832, 814), (832, 814)], reference_clicks)
 
     def test_business_collect_lost_claim_click_is_not_a_success(self):
         # The popup stays as it was: 一键获得 is pressed once more, then the
@@ -1451,7 +1458,7 @@ class DailyTaskHelperTest(unittest.TestCase):
         self.assertEqual((0, 0, 255), bgr)
         self.assertEqual((0, 255, 255), hsv)
 
-    def test_quick_hunt_home_requires_keyword_votes_brightness_and_gacha_ocr(self):
+    def test_quick_hunt_home_needs_enough_cues_and_brightness(self):
         task = object.__new__(QuickHuntTask)
         task.config = {"主页压暗阈值": 185.0}
         left_text = ["我的小屋 经营管理格鲁TALK 街机游戏"]
@@ -1468,13 +1475,18 @@ class DailyTaskHelperTest(unittest.TestCase):
 
         self.assertTrue(task._quick_hunt_home_signals(bright_frame)[0])
 
+        # 抽抽乐 plus one left word still counts (no other page reads 抽抽乐).
         left_text[0] = "我的小屋"
-        self.assertFalse(task._quick_hunt_home_signals(bright_frame)[0])
+        self.assertTrue(task._quick_hunt_home_signals(bright_frame)[0])
 
         left_text[0] = "我的小屋 格鲁TALK 街机游戏"
         self.assertFalse(task._quick_hunt_home_signals(dimmed_frame)[0])
 
         gacha_text[0] = ""
+        self.assertTrue(task._quick_hunt_home_signals(bright_frame)[0])
+        left_text[0] = "我的小屋 格鲁TALK"
+        self.assertFalse(task._quick_hunt_home_signals(bright_frame)[0])
+        left_text[0] = "我的小屋"
         self.assertFalse(task._quick_hunt_home_signals(bright_frame)[0])
 
     def test_quick_hunt_open_menu_prefers_home_ocr_center(self):

@@ -30,6 +30,7 @@ from src.tasks.map_trade.vision import normalize_text
 from src.utils.calibration import FHD_1080
 from src.utils.image_utils import to_gray
 from src.utils.wait_limits import STUCK_SECONDS, StillTimer
+from src.utils import ocr_size
 
 # The supplied 1920x1080 PC recording shows the complete recipe grid on one
 # page.  Every fixed control below is stored as a ratio; recipe and action
@@ -768,7 +769,7 @@ class CookingFlowMixin:
             frame,
             "料理列表标题",
             relative_roi=COOKING_HEADER_ROI,
-            target_height=900,
+            target_height=ocr_size.READ_HEIGHT,
         )
         if "料理" not in normalize_text(self.vision.simplify(header)):
             return None
@@ -847,7 +848,7 @@ class CookingFlowMixin:
 
     def _select_max_cooking_quantity(self, recipe: str) -> CookingDetailSnapshot | None:
         for attempt in range(1, COOKING_QUANTITY_ATTEMPTS + 1):
-            if self._click_quantity_choice(recipe, COOKING_MAX_CHOICE):
+            if self._click_quantity_choice(recipe, COOKING_MAX_CHOICE):  # 不用确认：循环里没按到 MAX 再按，最后按固定位置
                 ready = self._wait_for_cooking_detail(recipe, COOKING_QUANTITY_VERIFY_SECONDS)
                 if ready is not None and ready.enabled:
                     return ready
@@ -884,7 +885,7 @@ class CookingFlowMixin:
             frame,
             "料理详情标题",
             relative_roi=COOKING_HEADER_ROI,
-            target_height=900,
+            target_height=ocr_size.READ_HEIGHT,
         )
         if "料理" not in normalize_text(self.vision.simplify(header)):
             return None
@@ -892,7 +893,7 @@ class CookingFlowMixin:
             frame,
             f"料理详情-{recipe}",
             relative_roi=COOKING_DETAIL_NAME_ROI,
-            target_height=900,
+            target_height=ocr_size.READ_HEIGHT,
         )
         if (
             _character_coverage(recipe, self.vision.simplify(name))
@@ -925,7 +926,7 @@ class CookingFlowMixin:
             frame,
             "料理详情恢复标题",
             relative_roi=COOKING_HEADER_ROI,
-            target_height=900,
+            target_height=ocr_size.READ_HEIGHT,
         )
         if "料理" not in normalize_text(self.vision.simplify(header)):
             return None
@@ -949,7 +950,7 @@ class CookingFlowMixin:
             detail.frame,
             f"料理-{recipe}数量选项",
             relative_roi=COOKING_QUANTITY_CHOICES_ROI,
-            target_height=900,
+            target_height=ocr_size.READ_HEIGHT,
         )
         for box in boxes:
             text = normalize_text(self.vision.simplify(str(getattr(box, "name", ""))))
@@ -1021,7 +1022,7 @@ class CookingFlowMixin:
                 frame,
                 f"料理-{recipe}结果",
                 relative_roi=COOKING_RESULT_ROI,
-                target_height=900,
+                target_height=ocr_size.READ_HEIGHT,
             )
             last_text = text or last_text
             simplified = self.vision.simplify(text)
@@ -1065,13 +1066,13 @@ class CookingFlowMixin:
         (frames), and the same press on the way out worked.
         """
         end_at = monotonic() + COOKING_PAGE_TIMEOUT
-        self._click_cooking_back(frame, context=context)
+        self._click_cooking_back(frame, context=context)  # 不用确认：详情页还在再按返回，再 Esc
         if self._wait_for_cooking_list(COOKING_RECLICK_AFTER) is not None:
             return True
         still = self._detail_still_shown()
         if still is not None:
             self.task.log_info(f"料理：{context}按返回后详情页还在，再按一次返回。")
-            self._click_cooking_back(still, context=f"{context}补按")
+            self._click_cooking_back(still, context=f"{context}补按")  # 不用确认：这就是补按
         remaining = max(COOKING_RECLICK_AFTER, end_at - monotonic())
         if self._wait_for_cooking_list(remaining) is not None:
             return True
@@ -1153,7 +1154,7 @@ class CookingFlowMixin:
         list_snapshot = self._wait_for_cooking_list(1.0)
         if list_snapshot is None:
             return False
-        self._click_cooking_back(list_snapshot.frame, context="料理列表")
+        self._click_cooking_back(list_snapshot.frame, context="料理列表")  # 不用确认：列表还在再按返回，再 Esc
         # A swallowed 返回 leaves the list up for the whole wait, as on the
         # detail page (YES-BD2 #13); press it once more while the list shows
         # (player v0.2.11 2026-10-24: 「退出后未确认回到商人旁的箱庭」).
@@ -1161,7 +1162,7 @@ class CookingFlowMixin:
             still = self._list_still_shown()
             if still is not None:
                 self.task.log_info("料理：按返回后料理列表还在，再按一次返回。")
-                self._click_cooking_back(still, context="料理列表补按")
+                self._click_cooking_back(still, context="料理列表补按")  # 不用确认：这就是补按
         if not self.navigator.wait_for_q_sp6_sandbox(COOKING_EXIT_TIMEOUT) and not (
             self._escape_cooking_page(self._list_still_shown, "按返回后料理列表还在")
             and self.navigator.wait_for_q_sp6_sandbox(COOKING_EXIT_TIMEOUT)

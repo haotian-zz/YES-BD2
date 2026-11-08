@@ -503,8 +503,9 @@ class NavigatorTest(unittest.TestCase):
 
         self.assertTrue(result.success)
         self.assertEqual(["left", "left"], moves)
+        # No loading screen shows in this test: the circle is pressed once more.
         self.assertEqual(
-            [(teleport.center, (1080, 1920, 3), 0.0)],
+            [(teleport.center, (1080, 1920, 3), 0.0)] * 2,
             clicks,
         )
         self.assertEqual([], generation_calls)
@@ -1218,9 +1219,10 @@ class NavigatorTest(unittest.TestCase):
                 self.assertIs(received, frame) or self.assertEqual("传送阵生成确认", name) or boxes
             ),
             simplify=lambda value: value,
+            # The dialog closes once 生成 is pressed.
             click_client=lambda point, shape, after_sleep=0: clicks.append(
                 (point, shape, after_sleep)
-            ),
+            ) or (point == (1100, 644) and boxes.clear()),
         )
         navigator = Navigator(task, vision)
         navigator.ensure_small_minimap = lambda: True
@@ -1233,7 +1235,8 @@ class NavigatorTest(unittest.TestCase):
             ],
             clicks,
         )
-        self.assertEqual([frame], ocr_frames)
+        # One look for the dialog, one to see it gone after 生成.
+        self.assertEqual([frame, frame], ocr_frames)
 
     def test_teleport_generation_rejects_missing_and_selects_strongest_multiple_candidate(self):
         weaker = MatchResult(0.989, (800, 400), (60, 60), 0.932, 0.947)
@@ -1613,7 +1616,8 @@ class NavigatorTest(unittest.TestCase):
         )
         navigator = Navigator(task, vision)
         navigator.ensure_small_minimap = lambda: True
-        navigator._wait_for_current_sandbox = lambda: NavigationResult(
+        # Looked at twice (the second time up to the stuck limit), then given up.
+        navigator._wait_for_current_sandbox = lambda **_kwargs: NavigationResult(
             False,
             ScreenState.UNKNOWN,
             "未稳定确认当前剧情卡带箱庭",
@@ -2071,6 +2075,10 @@ class WalkToCollectionMapTest(unittest.TestCase):
         vision = SimpleNamespace(
             capture=lambda: np.zeros((1080, 1920, 3), np.uint8),
             click_client=lambda point, shape, after_sleep=0: clicks.append(point),
+            # The enlarged re-read of an unclear title (2026-11-05) reads
+            # nothing new here.
+            simplify=lambda text: text,
+            ocr_text=lambda *_a, **_k: "",
         )
         task = SimpleNamespace(operate_click=lambda *a, **k: None, sleep=lambda *a: None)
         navigator = Navigator(task, vision)

@@ -43,7 +43,10 @@ SHOP_CARTRIDGE_OCR_MIN_CONFIDENCE = 0.85
 SHOP_CARTRIDGE_NAME_MIN_SIMILARITY = 0.70
 SHOP_CARTRIDGE_ROW_CLUSTER_RADIUS = 28
 SHOP_CARTRIDGE_OCR_ROW_LINK_RADIUS = 42
-SHOP_CARTRIDGE_CATEGORY_PATTERN = re.compile(r"(剧情|角色|活动)游戏卡\s*(\d+)")
+# 繁中 client: 故事遊戲卡帶 1, read as 剧情游戏卡带1 (2026-10-23 clone).
+SHOP_CARTRIDGE_CATEGORY_PATTERN = re.compile(r"(剧情|角色|活动)游戏卡带?\s*(\d+)")
+# A label read without its number.
+SHOP_CARTRIDGE_BARE_CATEGORY_PATTERN = re.compile(r"(剧情|角色|活动)游戏卡带?$")
 SHOP_CARTRIDGE_CATEGORY_PREFIX = {"剧情": "S", "角色": "R", "活动": "E"}
 SHOP_FIRST_PAGE_MAX_UP_SCROLLS = 40
 # 出售会话起点定位：OCR 估算顶部行号后向上快滚，多滚 3 格保险（滚过头的列表
@@ -158,11 +161,10 @@ SHOP_MODE_SWITCH_MAX_CLICKS = 3
 # 在全画面搜索。
 SALE_MARKER_SEARCH_WIDTH = 150
 SALE_MARKER_VERTICAL_PADDING = 12
-# 全帧 OCR 目标高度：仅用于商品名识别重试。↑120% 标志本身不再依赖 OCR。
-SALE_FULL_PAGE_OCR_TARGET_HEIGHT = 900
-# 售出一组后的短暂重排/动画仍可能让 900 高度漏读商品名；
-# 保持 900 优先，并在同一帧追加相邻 OCR 高度。
-SALE_FULL_PAGE_OCR_TARGET_HEIGHTS = (900, 840, 960)
+# 全帧 OCR 读商品名：原尺寸读，不缩小（src/utils/ocr_size.py）。↑120% 标志本身不依赖 OCR。
+# 售出一组后的短暂重排/动画仍可能漏读商品名，同一帧再加边读、放大 1.5 倍读各一次。
+# 以前是缩到 900/840/960 各读一次，缩小会让笔画多的字读错（4K 2026-11-06）。
+SALE_FULL_PAGE_OCR_LOOKS = ({}, {"bordered": True}, {"ocr_scale": 1.5})
 # beta 模板移除了人工标注中不稳定的数字像素，仅在商品名左侧局部 ROI 内
 # 使用；全局误匹配由局部空间门禁阻断。
 SALE_120_PERCENT_MARKER_BETA_TEMPLATE = TemplateSpec(
@@ -261,6 +263,13 @@ SALE_OCR_INTERVAL = 0.25
 SALE_COMPLETION_TIMEOUT = 8.0
 SALE_COMPLETION_INTERVAL = 0.25
 SALE_COMPLETION_STABLE_HITS = 2
+# Card stock number, in name-box heights from the name's top left (FHD
+# sell_page fixture: name 香草牛排 at x=435 y=149 h=20, stock 2650 at
+# x=378..423 y=198..219).
+SALE_CARD_STOCK_LEFT_LINES = 5.0
+SALE_CARD_STOCK_RIGHT_SLACK_LINES = 0.3
+SALE_CARD_STOCK_TOP_LINES = 1.6
+SALE_CARD_STOCK_BOTTOM_LINES = 3.6
 # Require two consecutive scans without the target name before treating a
 # post-sale page as empty; a single OCR miss can occur during card reflow.
 SALE_EMPTY_NAME_STABLE_HITS = 2
@@ -279,6 +288,8 @@ COOK_SUBMENU_TEMPLATE = TemplateSpec(
 class ShopCartridgeTemplateCandidate:
     shop_id: str
     result: MatchResult
+    # The crop that matched (简中 or 繁中); empty is the shop's 简中 crop.
+    template: str = ""
 
 
 @dataclass(frozen=True)

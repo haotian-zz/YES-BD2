@@ -660,7 +660,9 @@ class QuickHuntFeatureMixin:
         last_left_hits = 0
         last_p95 = 0.0
         last_gacha_text = ""
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             frame = self.capture_frame()
             home_ok, last_left_hits, last_p95, last_gacha_text = (
                 self._quick_hunt_home_signals(frame)
@@ -750,7 +752,7 @@ class QuickHuntFeatureMixin:
             if clicked_by_ocr:
                 self._status_set("快速狩猎入口", "已点击 OCR 文字框中心")
             else:
-                self.operate_click(*QUICK_HUNT_ENTRY_POINT, after_sleep=1.0)
+                self.operate_click(*QUICK_HUNT_ENTRY_POINT, after_sleep=1.0)  # 不用确认：循环三次，菜单没出来再点
                 self._status_set("快速狩猎入口", "OCR 未命中，已点击固定入口中心")
 
             # User requirement: external coordinates must not be inferred or converted.
@@ -1049,7 +1051,7 @@ class QuickHuntFeatureMixin:
             if not menu.search(self._normalize_text(whole)):
                 self.log_info("快速狩猎：画面上没有狩猎菜单，没按圣石洞穴。")
                 return False
-        self._click_reference(*QUICK_HUNT_CRYSTAL_POINT, after_sleep=0.8)
+        self._click_reference(*QUICK_HUNT_CRYSTAL_POINT, after_sleep=0.8)  # 不用确认：调用处没见洞穴列表就再点（三次）
         return True
 
     def _quick_hunt_clear_crystal_cover(self) -> None:
@@ -1069,7 +1071,7 @@ class QuickHuntFeatureMixin:
         if any(word in self._normalize_text(popup) for word in ("不足", "无法", "耗尽")):
             # The same tap that puts the shortage popup away after a hunt.
             self.log_info("快速狩猎：资源不足提示还在，先点掉再找圣石洞穴。")
-            self._click_mf_reference(1, 1, after_sleep=0.5)
+            self._click_mf_reference(1, 1, after_sleep=0.5)  # 不用确认：下一步找圣石洞穴前会再看，提示还在会再点
 
     def _quick_hunt_log_screen(self, what: str) -> None:
         """One log line with the words on screen, so a 问题摘要 shows where it was."""
@@ -1308,7 +1310,7 @@ class QuickHuntFeatureMixin:
         if ensure_free_switch_on(
             f"快速狩猎：{stage}「仅使用免费」",
             self._quick_hunt_free_switch_ratio,
-            lambda: self._click_reference(*QUICK_HUNT_FREE_SWITCH_POINT, after_sleep=0.5),
+            lambda: self._click_reference(*QUICK_HUNT_FREE_SWITCH_POINT, after_sleep=0.5),  # 不用确认：只按一次，再按会把认不出亮色的开关关掉（review #28）
             on_above=QUICK_HUNT_FREE_SWITCH_MIN_RATIO,
             settle=QUICK_HUNT_FREE_SWITCH_SETTLE_SECONDS,
             sleep=self.sleep,
@@ -1378,9 +1380,11 @@ class QuickHuntFeatureMixin:
                 QUICK_HUNT_DIALOG_ROI,
                 name=f"{stage}-异常",
             )
-            normalized = self._normalize_text(dialog_text)
-            if any(keyword in normalized for keyword in ("不足", "无法", "耗尽")):
-                self._click_mf_reference(1, 1, after_sleep=0.5)
+            if any(
+                keyword in self._normalize_text(dialog_text)
+                for keyword in ("不足", "无法", "耗尽")
+            ):
+                self._click_mf_reference(1, 1, after_sleep=0.5)  # 不用确认：资源用完就结束，提示留给回主页关
                 return "depleted"
             # bd2 会话 2026-11-02: the 狩猎 press was swallowed and the
             # dialog (取消 / 狩猎 60) just stayed until the stuck watch fired.
@@ -1651,7 +1655,9 @@ class QuickHuntFeatureMixin:
         end_at = monotonic() + self._quick_hunt_ui_timeout()
         last_text = ""
         plain_dialog_reads = 0
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             frame = self.capture_frame()
             boxes = self._quick_vision().ocr_boxes(
                 frame,
@@ -1709,7 +1715,9 @@ class QuickHuntFeatureMixin:
         vision = self._quick_vision()
         frame = None
         seen = ""
-        while monotonic() <= end_at:
+        looked = False  # 至少看一次：时间已到也先看一眼再说没看到
+        while not looked or monotonic() <= end_at:
+            looked = True
             frame = self.capture_frame()
             boxes = list(vision.ocr_boxes(frame, name, relative_roi=roi))
             seen = " ".join(str(getattr(box, "name", "")) for box in boxes)
@@ -1722,7 +1730,7 @@ class QuickHuntFeatureMixin:
                 point = self._quick_hunt_box_center(box)
                 if point is None:
                     continue
-                vision.click_client(point, frame.shape, after_sleep=0.8)
+                vision.click_client(point, frame.shape, after_sleep=0.8)  # 不用确认：helper 本身，调用处检查
                 return True
             self.sleep(0.4)
         self.log_info(f"快速狩猎：{_miss_reason(name, seen, frame)}")
@@ -1792,7 +1800,7 @@ class QuickHuntFeatureMixin:
             ):
                 self.sleep(0.35)
                 continue
-            self._click_reference(*QUICK_HUNT_RETURN_POINT, after_sleep=2.0)
+            self._click_reference(*QUICK_HUNT_RETURN_POINT, after_sleep=2.0)  # 不用确认：循环里没回主页再点
         # A slow last transition: give home a few seconds before failing.
         end_at = monotonic() + QUICK_HUNT_HOME_LAST_WAIT_SECONDS
         while True:
@@ -1841,7 +1849,7 @@ class QuickHuntFeatureMixin:
         return float(self.config.get("快速狩猎界面等待秒数", 8.0))
 
     def _click_mf_reference(self, x: int, y: int, after_sleep: float = 0.0):
-        self.operate_click(
+        self.operate_click(  # 不用确认：helper 本身，调用处检查
             max(0.0, min(1.0, x / HD_720.width)),
             max(0.0, min(1.0, y / HD_720.height)),
             after_sleep=after_sleep,

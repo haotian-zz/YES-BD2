@@ -26,6 +26,12 @@ from src.tasks.map_trade.models import (
     ScreenState,
 )
 from src.tasks.map_trade.navigator_constants import (
+    BATTLE_REWARDS_SWITCH_AFTER_SLEEP,
+    BATTLE_REWARDS_SWITCH_OFF_YELLOW,
+    BATTLE_REWARDS_SWITCH_ON_YELLOW,
+    BATTLE_REWARDS_SWITCH_POINT,
+    BATTLE_REWARDS_SWITCH_PRESSES,
+    BATTLE_REWARDS_SWITCH_REGION,
     CHARACTER_BADGE_MIN_MARGIN,
     CHARACTER_BADGE_MIN_SCORE,
     CHARACTER_BADGE_SPECS,
@@ -120,9 +126,23 @@ from src.utils.cartridge_quick_switch import (
     LIFE_GAMEPLAY_CATEGORY_POINT,
     QUICK_SWITCH_STABLE_FRAMES,
 )
+from src.utils.colour_rules import switch_knob_side, switch_yellow_ratio
 from src.utils.ocr_utils import keyword_read
-from src.utils.press_confirm import RETRY_AFTER_SECONDS
 from src.utils import story_push
+from src.utils.press_confirm import RETRY_AFTER_SECONDS, press_and_confirm
+from src.utils.wait_limits import STUCK_SECONDS
+from src.utils import ocr_size
+
+# Told to the player when the tool turned 「查看战场奖励」 on, or could not.
+BATTLE_REWARDS_TURNED_ON_MESSAGE = (
+    "跑图：快速切换卡带页右下角的「查看战场奖励」原本是关着的，已帮你打开。"
+    "跑图要靠卡带下方的吸取/压制图示确认完成，请保持打开。"
+)
+BATTLE_REWARDS_STILL_OFF_MESSAGE = (
+    "跑图：快速切换卡带页右下角的「查看战场奖励」是关着的，工具按了也没打开。"
+    "关着时卡带下方没有吸取/压制图示，没法确认卡带完成。"
+    "请按 P 打开快速切换卡带页，点右下角「查看战场奖励」的开关，让它变成黄色。"
+)
 
 # 从箱庭点击快速切换按钮的统一识别窗口与点击后停顿。
 QUICK_SWITCH_CLICK_TIMEOUT = 10.0
@@ -341,7 +361,7 @@ class StoryCardNavigationMixin:
     def _open_story_quick_switcher(self, category: str = "story") -> NavigationResult:
         opened = self.task.open_cartridge_quick_switcher(
             ensure_home=self._wait_for_cartridge_home,
-            click_quick_switch=lambda: self._click_quick_switch(
+            click_quick_switch=lambda: self._click_quick_switch(  # 不用确认：open_cartridge_quick_switcher 页面没出来会用 repress 钩子重按
                 QUICK_SWITCH_CLICK_TIMEOUT, QUICK_SWITCH_CLICK_AFTER_SLEEP
             ),
             confirm_quick_switch_page=self._wait_for_quick_switch_page,
@@ -2428,7 +2448,7 @@ class StoryCardNavigationMixin:
             return returned
         opened = self.task.open_cartridge_quick_switcher(
             ensure_home=self._wait_for_cartridge_home,
-            click_quick_switch=lambda: self._click_quick_switch(10.0, 1.0),
+            click_quick_switch=lambda: self._click_quick_switch(10.0, 1.0),  # 不用确认：open_cartridge_quick_switcher 页面没出来会用 repress 钩子重按
             confirm_quick_switch_page=self._wait_for_quick_switch_page,
             **self._quick_switch_repress_hooks(),
         )
@@ -2477,6 +2497,7 @@ class StoryCardNavigationMixin:
             if not menu.success:
                 return menu
 
+        self._ensure_battle_rewards_shown()
         self._status("导航状态", f"识别{label}{card.number}角标")
         badge_match = self._wait_for_story_badge_with_scroll(card.number)
         if badge_match is None:
@@ -2498,6 +2519,64 @@ class StoryCardNavigationMixin:
             ),
         )
         return LocatedStoryCard(card, badge_frame, badge)
+
+    def _battle_rewards_switch(self) -> str | None:
+        """"on" / "off" of the quick bar's 「查看战场奖励」 switch; None unclear.
+
+        The knob's side decides when colours are off (HDR, filters); the
+        yellow track agrees with it on a clean picture."""
+        frame = self.vision.capture()
+        if frame is None or getattr(frame, "ndim", 0) != 3:
+            return None
+        height, width = frame.shape[:2]
+        left, top, right, bottom = BATTLE_REWARDS_SWITCH_REGION
+        crop = frame[
+            round(top * height) : round(bottom * height),
+            round(left * width) : round(right * width),
+        ]
+        if crop.size == 0:
+            return None
+        yellow = switch_yellow_ratio(crop)
+        side = switch_knob_side(crop, crop.shape[1] / 2)
+        self._status("查看战场奖励开关", f"黄色 {yellow:.3f}，圆钮 {side or '-'}")
+        if yellow >= BATTLE_REWARDS_SWITCH_ON_YELLOW or side == "on":
+            return "on"
+        if side == "off" and yellow <= BATTLE_REWARDS_SWITCH_OFF_YELLOW:
+            return "off"
+        return None
+
+    def _ensure_battle_rewards_shown(self) -> None:
+        """Turn 「查看战场奖励」 on: off, the cards carry no 吸取/压制 badges and
+        no card can be confirmed done (player v0.2.31 2026-11-05, 活动卡3/7).
+        Leo 2026-11-05 「工具要把她打開 也要提示用戶打開」.  A display switch
+        only (harmless): pressed at most twice, each time only while it still
+        reads clearly off; checked once per run once it reads on."""
+        if getattr(self, "_battle_rewards_on", False):
+            return
+        state = self._battle_rewards_switch()
+        self._battle_rewards_still_off = False
+        if state != "off":
+            self._battle_rewards_on = state == "on"
+            return
+        self._status("查看战场奖励开关", "关着，点开")
+        outcome = press_and_confirm(
+            "查看战场奖励开关",
+            lambda: self.task.operate_click(
+                *BATTLE_REWARDS_SWITCH_POINT, after_sleep=BATTLE_REWARDS_SWITCH_AFTER_SLEEP
+            ),
+            lambda: self._battle_rewards_switch() == "on",
+            still_before=lambda: self._battle_rewards_switch() == "off",
+            sleep=self.task.sleep,
+            log=self.task.log_info,
+            retries=BATTLE_REWARDS_SWITCH_PRESSES - 1,
+        )
+        if outcome:
+            self._battle_rewards_on = True
+            self.task.log_info(BATTLE_REWARDS_TURNED_ON_MESSAGE)
+            return
+        state = self._battle_rewards_switch()
+        self._battle_rewards_still_off = state == "off"
+        self.task.log_warning(BATTLE_REWARDS_STILL_OFF_MESSAGE)
 
     def _menu_still_confirmed(self, category: str) -> bool:
         """The quick-switch tab was confirmed moments ago and still shows lit."""
@@ -2778,7 +2857,7 @@ class StoryCardNavigationMixin:
         )
         try:
             text = self.vision.ocr_text(
-                frame, "卡带吸取剩余", relative_roi=box, target_height=1080, ocr_scale=2.0
+                frame, "卡带吸取剩余", relative_roi=box, target_height=ocr_size.READ_HEIGHT, ocr_scale=2.0
             )
         except (RuntimeError, ValueError, cv2.error, AttributeError):
             return None
@@ -2858,6 +2937,11 @@ class StoryCardNavigationMixin:
                     else f"{card_id}视觉确认吸取与压制均完成"
                     if completed
                     else f"{card_id}未同时确认吸取与压制完成"
+                    + (
+                        "（快速切换页右下角「查看战场奖励」关着，卡带下方没有吸取/压制图示）"
+                        if getattr(self, "_battle_rewards_still_off", False)
+                        else ""
+                    )
                 ),
             ),
             completion,
@@ -2874,6 +2958,12 @@ class StoryCardNavigationMixin:
         if not sandbox_already_confirmed:
             sandbox = self._wait_for_current_sandbox()
             if not sandbox.success:
+                # Look once more, up to the stuck limit: a scene the field
+                # check cannot read (a patrol's catch sending the character
+                # back, player v0.2.31 2026-11-05) ends by itself.
+                self._status("导航状态", "没马上看到卡带箱庭，再看一次")
+                sandbox = self._wait_for_current_sandbox(timeout=STUCK_SECONDS)
+            if not sandbox.success:
                 return sandbox
 
         self._status("导航状态", "从卡带箱庭识别快速切换按钮")
@@ -2883,7 +2973,7 @@ class StoryCardNavigationMixin:
         # still has to pass.
         # A click the game did not take, or a button that never read, falls
         # back to the P key (YES-BD2 #23).
-        if not self._click_quick_switch(
+        if not self._click_quick_switch(  # 不用确认：点不到改按 P 键
             QUICK_SWITCH_CLICK_TIMEOUT,
             QUICK_SWITCH_CLICK_AFTER_SLEEP,
         ):

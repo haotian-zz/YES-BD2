@@ -10,9 +10,14 @@ from src.config import config
 from src.tasks import run_report, scheduler, weekly_ticks
 from src.tasks.BaseBD2Task import BaseBD2Task
 from src.tasks.DailyBatchTask import (
+    CLOSE_GAME_AFTER_FAIL_FAILED_NOTE,
+    CLOSE_GAME_AFTER_FAIL_NOTE,
     CLOSE_GAME_FAILED_NOTE,
     CLOSE_GAME_KEY,
     CLOSE_GAME_NOTE,
+    CLOSE_GAME_WHEN_KEY,
+    CLOSE_WHEN_ALWAYS,
+    CLOSE_WHEN_CLEAN,
     RUN_MODE_ALL,
     RUN_MODE_INCOMPLETE,
     SHUTDOWN_COUNTDOWN_SECONDS,
@@ -53,13 +58,13 @@ class _ChildTask:
         self.name = name
         self.calls = calls
         self.result = result
-        self.config = {"启用": False, "保留配置": 1}
+        self.config = {"保留配置": 1}
 
     def info_clear(self):
         pass
 
     def run(self):
-        self.calls.append((self.name, self.config.get("启用")))
+        self.calls.append((self.name, True))  # ran
         return self.result
 
 
@@ -121,7 +126,9 @@ class DailyBatchTaskTest(unittest.TestCase):
             # 2026-10-03: as the very last item, after the mail.
             "每周跑图",
         ]
-        self.assertEqual(expected, task.config_type["启用"]["sub_configs"][True])
+        from src.tasks.DailyBatchTask import DAILY_BATCH_CHILDREN
+
+        self.assertEqual(expected, [c.config_key for c in DAILY_BATCH_CHILDREN])
         self.assertTrue(all(task.default_config[key] for key in expected))
 
     def test_weekly_map_collection_card_is_shown_in_the_daily_group(self):
@@ -163,6 +170,32 @@ class DailyBatchTaskTest(unittest.TestCase):
         self.assertIs(original_first_config, first.config)
         self.assertIs(original_second_config, second.config)
         self.assertEqual(2, len(resets))
+
+    def test_the_old_allow_switch_off_never_ends_the_run_with_nothing_done(self):
+        # Player 2026-11-05: 「点击一键完成日常后直接显示完毕」 across restarts,
+        # the 桌面分身 and an older version; single tasks ran.  The saved
+        # 「允许一键运行」 (启用) was off: run() returned at once.
+        class First:
+            pass
+
+        calls = []
+        task, _resets = self.make_task(
+            {First: _ChildTask("first", calls)},
+            (DailyBatchChild("第一项", First),),
+            {"启用": False, "第一项": True},
+        )
+
+        self.assertTrue(DailyBatchTask.run(task))
+        self.assertEqual([("first", True)], calls)
+
+    def test_the_allow_switch_is_gone(self):
+        # Leo 2026-11-05 「直接移除他」.
+        from src.ui.shell.task_page import BATCH_OPTION_LABELS
+
+        self.assertNotIn("启用", BATCH_OPTION_LABELS)
+        task = DailyBatchTask(SimpleNamespace(scene=None), SimpleNamespace())
+        self.assertNotIn("启用", task.default_config)
+        self.assertNotIn("启用", task.config_type)
 
     def test_a_scheduled_slots_own_items_run_and_the_ticks_stay(self):
         # Leo 2026-10-29 「也要選擇該時段進行的任務」.
@@ -1171,7 +1204,14 @@ class DailyBatchTaskTest(unittest.TestCase):
                     DailyBatchTask.run(task)
                 shutdown.assert_not_called()
 
-    def _close_game_run(self, switch_on: bool, second_result: bool = True, closed: bool = True):
+    def _close_game_run(
+        self,
+        switch_on: bool,
+        second_result: bool = True,
+        closed: bool = True,
+        when: str | None = None,
+        before_run=None,
+    ):
         class First:
             pass
 
@@ -1184,8 +1224,16 @@ class DailyBatchTaskTest(unittest.TestCase):
         task, _resets = self.make_task(
             {First: first, Second: second},
             specs,
-            {"启用": True, CLOSE_GAME_KEY: switch_on, "第一项": True, "第二项": True},
+            {
+                "启用": True,
+                CLOSE_GAME_KEY: switch_on,
+                "第一项": True,
+                "第二项": True,
+                **({CLOSE_GAME_WHEN_KEY: when} if when else {}),
+            },
         )
+        if before_run is not None:
+            before_run(task)
         with tempfile.TemporaryDirectory() as temp_dir:
             set_default_store(RunHistoryStore(f"{temp_dir}/history.json"))
             try:
@@ -1211,6 +1259,80 @@ class DailyBatchTaskTest(unittest.TestCase):
 
     def test_close_game_not_after_a_failure(self):
         _task, close, _notice = self._close_game_run(switch_on=True, second_result=False)
+        close.assert_not_called()
+
+    def test_close_game_default_is_only_with_no_failure(self):
+        batch = DailyBatchTask(executor=SimpleNamespace(scene=None), app=SimpleNamespace())
+        self.assertEqual(CLOSE_WHEN_CLEAN, batch.default_config[CLOSE_GAME_WHEN_KEY])
+        _task, close, _notice = self._close_game_run(
+            switch_on=True, second_result=False, when=CLOSE_WHEN_CLEAN
+        )
+        close.assert_not_called()
+
+    def test_close_game_even_after_a_failure_when_chosen(self):
+        """A player asked (2026-11-02): close however the run ended."""
+        task, close, notice = self._close_game_run(
+            switch_on=True, second_result=False, when=CLOSE_WHEN_ALWAYS
+        )
+        close.assert_called_once_with()
+        notice.assert_called_once_with(CLOSE_GAME_AFTER_FAIL_NOTE)
+        self.assertIn("已关闭游戏", task.info.get("状态"))
+
+    def test_close_game_always_still_needs_the_switch(self):
+        _task, close, _notice = self._close_game_run(
+            switch_on=False, second_result=False, when=CLOSE_WHEN_ALWAYS
+        )
+        close.assert_not_called()
+
+    def test_close_game_always_also_closes_a_clean_run(self):
+        _task, close, notice = self._close_game_run(switch_on=True, when=CLOSE_WHEN_ALWAYS)
+        close.assert_called_once_with()
+        notice.assert_called_once_with(CLOSE_GAME_NOTE)
+
+    def test_close_game_always_that_will_not_close_is_told(self):
+        _task, close, notice = self._close_game_run(
+            switch_on=True, second_result=False, closed=False, when=CLOSE_WHEN_ALWAYS
+        )
+        close.assert_called_once_with()
+        notice.assert_called_once_with(CLOSE_GAME_AFTER_FAIL_FAILED_NOTE)
+
+    def test_close_game_always_waits_for_a_run_that_resumes_after_login(self):
+        def resumes(task):
+            task._resume_after_login_set = lambda: True
+
+        _task, close, _notice = self._close_game_run(
+            switch_on=True, second_result=False, when=CLOSE_WHEN_ALWAYS, before_run=resumes
+        )
+        close.assert_not_called()
+
+    def test_close_game_always_also_when_the_tool_hits_an_error(self):
+        """Leo 2026-11-02 「跑程式失敗」: the run breaking off on an error."""
+
+        def breaks(task):
+            def fail(_mode):
+                raise RuntimeError("boom")
+
+            task._run_children = fail
+
+        with (
+            mock.patch.object(DailyBatchTask, "_close_game", return_value=True) as close,
+            self.assertRaises(RuntimeError),
+        ):
+            self._close_game_run(switch_on=True, when=CLOSE_WHEN_ALWAYS, before_run=breaks)
+        close.assert_called_once()
+
+    def test_close_game_clean_only_not_when_the_tool_hits_an_error(self):
+        def breaks(task):
+            def fail(_mode):
+                raise RuntimeError("boom")
+
+            task._run_children = fail
+
+        with (
+            mock.patch.object(DailyBatchTask, "_close_game", return_value=True) as close,
+            self.assertRaises(RuntimeError),
+        ):
+            self._close_game_run(switch_on=True, when=CLOSE_WHEN_CLEAN, before_run=breaks)
         close.assert_not_called()
 
     def test_close_game_that_will_not_close_is_told(self):
@@ -1502,7 +1624,7 @@ class CrashRestartTest(unittest.TestCase):
 
         class Crashing(_ChildTask):
             def run(self):
-                calls.append((self.name, self.config.get("启用")))
+                calls.append((self.name, True))  # ran
                 if not game.get("crashed"):  # closes once
                     game["crashed"] = True
                     game["running"] = False

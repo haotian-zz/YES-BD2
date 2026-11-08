@@ -218,7 +218,7 @@ def dialogs(shell):
 
         return open_it
 
-    from src.ui.shell import run_notify_dialog, schedule_ui, schedule_week
+    from src.ui.shell import fps_notice, run_notify_dialog, schedule_ui, schedule_week
     from src.utils.scheduled_start import Slot
     from src.ui.shell.widgets import shell_buttons
     from src.utils import accounts
@@ -303,6 +303,9 @@ def dialogs(shell):
             ("other-mode", lambda d: d._set_mode([m for m in (run_confirm.MODE_LEFT, run_confirm.MODE_TICKED) if m != d.mode][0])),
             ("none", lambda d: d._select_all(False)),
             ("all", lambda d: d._select_all(True)),
+            # 做完关闭游戏 ticked shows 什么时候关 beside it (2026-11-02).
+            ("close-game", lambda d: d.close_game and d.close_game.setChecked(True)),
+            ("close-always", lambda d: d.close_when and d.close_when.set_value(d.close_when_options[-1])),
         ],
         "skill-interval": [
             ("max", lambda d: d.slider.setValue(d.slider.maximum())),
@@ -328,6 +331,7 @@ def dialogs(shell):
         ("schedule-tasks", lambda: schedule_ui.TaskPickDialog(own_slot(), window).exec()),
         ("schedule-item-settings", lambda: schedule_ui.ItemSettingsDialog(pvp_item(), {"竞技场战斗倍数": 2}, window).exec()),
         ("run-notify", lambda: run_notify_dialog.ask(window)),
+        ("fps-notice", lambda: fps_notice.FpsNotice(["RivaTuner (RTSS)", "Bandicam"], window).exec()),
         ("account-mismatch", lambda: accounts_ui.MismatchDialog(window).exec()),
         ("clone-ask", lambda: clone_flow.ask_and_start(window, batch)),
         ("language-relaunch", lambda: shell.pages["settings"]._offer_relaunch()),

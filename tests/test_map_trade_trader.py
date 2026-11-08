@@ -121,7 +121,7 @@ from src.tasks.map_trade.trader_constants import (
     SALE_DIALOG_REGION,
     SALE_DIALOG_TITLE_REGION,
     SALE_EMPTY_NAME_STABLE_HITS,
-    SALE_FULL_PAGE_OCR_TARGET_HEIGHTS,
+    SALE_FULL_PAGE_OCR_LOOKS,
     SALE_MARKER_RELAXED_PIXEL_SCORE,
     SALE_MAX_POINT,
     SALE_NAME_FRAGMENT_MIN_CHARS,
@@ -682,7 +682,7 @@ class SellFlowTest(unittest.TestCase):
             self._marker_result(1157, 563),
         )
         trader, match_calls = self._make_sale_template_trader(
-            lambda _frame, _name, target_height=900: boxes,
+            lambda _frame, _name, **_look: boxes,
             markers,
         )
 
@@ -770,14 +770,14 @@ class SellFlowTest(unittest.TestCase):
             ],
         )
 
-    def test_locate_sale_items_retries_adjacent_ocr_height_for_item_name(self):
+    def test_locate_sale_items_reads_again_bordered_for_item_name(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
-        target_heights = []
+        looks = []
         markers = (self._marker_result(493, 563),)
 
-        def ocr_boxes(_frame, _name, target_height=900):
-            target_heights.append(target_height)
-            item_name = "胡萝卜" if target_height == 900 else "水果罐头"
+        def ocr_boxes(_frame, _name, **look):
+            looks.append(look)
+            item_name = "胡萝卜" if not look else "水果罐头"
             return [
                 self._text_box("4120%", 492, 451, 56, 13),
                 self._text_box("4129", 824, 451, 56, 13),
@@ -793,13 +793,14 @@ class SellFlowTest(unittest.TestCase):
         )
 
         self.assertEqual([(634, 572)], [candidate.center for candidate in candidates])
-        self.assertEqual((900, 840, 960), SALE_FULL_PAGE_OCR_TARGET_HEIGHTS)
-        self.assertEqual([900, 840], target_heights)
+        # Never shrunk: the captured size, then bordered, then enlarged.
+        self.assertEqual(({}, {"bordered": True}, {"ocr_scale": 1.5}), SALE_FULL_PAGE_OCR_LOOKS)
+        self.assertEqual([{}, {"bordered": True}], looks)
         self.assertFalse(trader._last_sale_unavailable)
 
     def test_locate_sale_items_ignores_bad_percent_ocr_when_local_template_misses(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
-        target_heights = []
+        looks = []
         boxes = [
             self._text_box("4120%", 492, 451, 56, 13),
             self._text_box("4129", 824, 451, 56, 13),
@@ -807,8 +808,8 @@ class SellFlowTest(unittest.TestCase):
             self._text_box("水果罐头", 945, 560, 42, 23),
         ]
 
-        def ocr_boxes(_frame, _name, target_height=900):
-            target_heights.append(target_height)
+        def ocr_boxes(_frame, _name, **look):
+            looks.append(look)
             return boxes
 
         trader, match_calls = self._make_sale_template_trader(ocr_boxes, ())
@@ -820,7 +821,7 @@ class SellFlowTest(unittest.TestCase):
                 frame,
             ),
         )
-        self.assertEqual([900, 840, 960], target_heights)
+        self.assertEqual(list(SALE_FULL_PAGE_OCR_LOOKS), looks)
         # The strict pass misses, then the relaxed pass (which still needs a
         # template hit, OCR alone never makes a marker) finds nothing either.
         self.assertEqual(2, len(match_calls))
@@ -871,7 +872,7 @@ class SellFlowTest(unittest.TestCase):
         marker = MatchResult(0.981, (657, 252), (70, 19), pixel_score=0.923)
         crop_calls = []
 
-        def ocr_boxes(_frame, name, target_height=900, ocr_scale=1.0):
+        def ocr_boxes(_frame, name, target_height=0, ocr_scale=1.0, bordered=False):
             if name == "出售↑120%标志":
                 crop_calls.append(ocr_scale)
                 text = crop_reads.get(ocr_scale, "")
@@ -908,10 +909,10 @@ class SellFlowTest(unittest.TestCase):
 
     def test_locate_sale_items_with_no_ocr_output_is_not_marked_sold_out(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
-        target_heights = []
+        looks = []
         trader, _match_calls = self._make_sale_template_trader(
-            lambda _frame, _name, target_height=900: (
-                target_heights.append(target_height) or []
+            lambda _frame, _name, **look: (
+                looks.append(look) or []
             ),
             (self._marker_result(493, 563),),
         )
@@ -923,17 +924,17 @@ class SellFlowTest(unittest.TestCase):
                 frame,
             ),
         )
-        self.assertEqual([900, 840, 960], target_heights)
+        self.assertEqual(list(SALE_FULL_PAGE_OCR_LOOKS), looks)
         self.assertFalse(trader._last_sale_unavailable)
         self.assertEqual("全画面OCR未返回任何文本", trader._last_sale_reason)
 
     def test_name_missed_with_other_page_text_is_marked_unavailable(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
-        target_heights = []
+        looks = []
         other_item = self._text_box("胡萝卜", 613, 560, 42, 23)
         trader, match_calls = self._make_sale_template_trader(
-            lambda _frame, _name, target_height=900: (
-                target_heights.append(target_height) or [other_item]
+            lambda _frame, _name, **look: (
+                looks.append(look) or [other_item]
             ),
             (self._marker_result(493, 563),),
         )
@@ -945,7 +946,7 @@ class SellFlowTest(unittest.TestCase):
                 frame,
             ),
         )
-        self.assertEqual([900, 840, 960], target_heights)
+        self.assertEqual(list(SALE_FULL_PAGE_OCR_LOOKS), looks)
         self.assertEqual([], match_calls)
         self.assertTrue(trader._last_sale_unavailable)
         self.assertEqual(
@@ -1832,6 +1833,151 @@ class SellFlowTest(unittest.TestCase):
                 before_toast_id=5,
             )
         )
+
+    def _partial_sale_trader(self, pages, logs):
+        trader = object.__new__(Trader)
+        trader.task = SimpleNamespace(
+            sleep=lambda *_args: None,
+            info_set=lambda *_args: None,
+            log_info=logs.append,
+            log_warning=logs.append,
+        )
+        page_iter = iter(pages)
+        last = [pages[-1]]
+
+        def ocr_boxes(*_args, **_kwargs):
+            if _args[1:2] == ("出售商品卡库存",):
+                return []
+            last[0] = next(page_iter, last[0])
+            return last[0]
+
+        trader.vision = SimpleNamespace(
+            capture=lambda: np.zeros((1080, 1920, 3), dtype=np.uint8),
+            ocr_text=lambda _frame, name, **_kwargs: "",
+            simplify=lambda value: value,
+            ocr_boxes=ocr_boxes,
+        )
+        return trader
+
+    def test_partial_sale_is_confirmed_by_the_card_stock_number(self):
+        # Live 4K 2026-11-05: 353 甜椒 of 2640 sold, the card stayed in place
+        # and no toast was read, so the sale was left out of the report.
+        name = SimpleNamespace(name="甜椒", x=435, y=149, width=40, height=20)
+        after = [name, SimpleNamespace(name="2287", x=378, y=198, width=45, height=21)]
+        logs = []
+        trader = self._partial_sale_trader([after, after], logs)
+        entry = CalendarEntry("甜椒", "S3")
+        signature = (("甜椒", 435, 149, 40, 20),)
+        self.assertTrue(
+            trader._wait_sale_completion(
+                entry,
+                np.zeros((1080, 1920, 3), dtype=np.uint8),
+                signature,
+                timeout=5.0,
+                before_toast_id=5,
+                owned=2640,
+                selected=353,
+                name_box=name,
+            )
+        )
+        self.assertTrue(any("2640变为2287" in line for line in logs))
+        self.assertEqual(353, trader._confirmed_sale_quantity)
+
+    def test_partial_sale_counts_any_drop_within_what_was_chosen(self):
+        # Leo 11-05: not only the exact sum; any lower stock the sale can
+        # reach counts, and the report takes the real drop.
+        name = SimpleNamespace(name="甜椒", x=435, y=149, width=40, height=20)
+        after = [name, SimpleNamespace(name="2300", x=378, y=198, width=45, height=21)]
+        logs = []
+        trader = self._partial_sale_trader([after, after], logs)
+        self.assertTrue(
+            trader._wait_sale_completion(
+                CalendarEntry("甜椒", "S3"),
+                np.zeros((1080, 1920, 3), dtype=np.uint8),
+                (("甜椒", 435, 149, 40, 20),),
+                timeout=5.0,
+                before_toast_id=5,
+                owned=2640,
+                selected=353,
+                name_box=name,
+            )
+        )
+        self.assertEqual(340, trader._confirmed_sale_quantity)
+        self.assertTrue(Trader._stock_shows_sale(2640, 2287, 2287))
+        self.assertFalse(Trader._stock_shows_sale(2640, 2286, 2287))  # more than chosen
+        self.assertFalse(Trader._stock_shows_sale(2640, 2640, 2287))  # unchanged
+        self.assertFalse(Trader._stock_shows_sale(2640, 264, 0))  # a digit lost
+
+    def test_card_stock_misread_never_confirms_a_sale(self):
+        # A dropped digit (2287 -> 228) or the old count must not count.
+        name = SimpleNamespace(name="甜椒", x=435, y=149, width=40, height=20)
+        pages = [
+            [name, SimpleNamespace(name=value, x=378, y=198, width=45, height=21)]
+            for value in ("2640", "228", "2640", "228")
+        ]
+        logs = []
+        trader = self._partial_sale_trader(pages, logs)
+        trader._sale_name_signature = lambda *_args: (("甜椒", 435, 149, 40, 20),)
+        self.assertFalse(
+            trader._wait_sale_completion(
+                CalendarEntry("甜椒", "S3"),
+                np.zeros((1080, 1920, 3), dtype=np.uint8),
+                (("甜椒", 435, 149, 40, 20),),
+                timeout=0.0,
+                before_toast_id=5,
+                owned=2640,
+                selected=353,
+                name_box=name,
+            )
+        )
+        self.assertIn("应在2287到2639之间", logs[-1])
+
+    def test_card_stock_reads_the_number_under_the_icon_not_the_price(self):
+        name = SimpleNamespace(name="香草牛排", x=435, y=149, width=60, height=20)
+        boxes = [
+            name,
+            SimpleNamespace(name="食物", x=435, y=174, width=33, height=18),
+            SimpleNamespace(name="2650", x=378, y=198, width=45, height=21),
+            SimpleNamespace(name="33603.964", x=433, y=195, width=98, height=21),
+        ]
+        trader = object.__new__(Trader)
+        trader.vision = SimpleNamespace(ocr_boxes=lambda *_args, **_kwargs: boxes)
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        self.assertEqual(2650, trader._sale_card_stock(frame, name))
+        # Number missing from the page read: the small area is read alone.
+        calls = []
+        page = [name]
+
+        def ocr_boxes(_frame, label, **kwargs):
+            calls.append(label)
+            if label == "出售商品卡库存":
+                return [SimpleNamespace(name="2650"), SimpleNamespace(name="104%*")]
+            return page
+
+        trader = object.__new__(Trader)
+        trader.vision = SimpleNamespace(ocr_boxes=ocr_boxes)
+        self.assertEqual(2650, trader._sale_card_stock(frame, name))
+        self.assertIn("出售商品卡库存", calls)
+
+    def test_retry_records_an_unconfirmed_sale_when_the_dialog_count_dropped(self):
+        notes = []
+        logs = []
+        trader = object.__new__(Trader)
+        trader.task = SimpleNamespace(info_set=lambda *_args: None, log_info=logs.append)
+        trader.trade_detail = SimpleNamespace(add_sale=lambda item, qty: notes.append((item, qty)))
+        entry = CalendarEntry("甜椒", "S3", reserve=2000)
+        trader._unconfirmed_sale = ("甜椒", 2640, 353)
+        trader._settle_unconfirmed_sale(entry, 2287)
+        self.assertEqual([("甜椒", 353)], notes)
+        self.assertIsNone(trader._unconfirmed_sale)
+        # Count unchanged: the earlier press really sold nothing.
+        trader._unconfirmed_sale = ("甜椒", 2640, 353)
+        trader._settle_unconfirmed_sale(entry, 2640)
+        self.assertEqual([("甜椒", 353)], notes)
+        # Another item's dialog never settles it.
+        trader._unconfirmed_sale = ("甜椒", 2640, 353)
+        trader._settle_unconfirmed_sale(CalendarEntry("鱼子酱", "S3"), 100)
+        self.assertEqual([("甜椒", 353)], notes)
 
     def test_sale_completion_reads_the_page_once_per_poll(self):
         calls = []
@@ -3257,9 +3403,10 @@ class TradeMerchantNavigationTest(unittest.TestCase):
         located = self._located_trade_card()
         clock = [0.0]
         still = np.full((720, 1280, 3), 120, np.uint8)
+        self.trade_card_clicks = []
         navigator = self._navigator(
             SimpleNamespace(
-                click_client=lambda *_args, **_kwargs: None,
+                click_client=lambda *_args, **_kwargs: self.trade_card_clicks.append(clock[0]),
                 capture=lambda: still,
             )
         )
@@ -3280,7 +3427,22 @@ class TradeMerchantNavigationTest(unittest.TestCase):
         result, now = self._timed_trade_card_entry(lambda _t: next(looks))
         self.assertFalse(result.success)
         self.assertEqual("剧情游戏卡1入场确认超时", result.message)
-        self.assertLessEqual(now, STUCK_SECONDS + 1.0)
+        # At most one more press (the card page was what it last saw).
+        self.assertLessEqual(len(self.trade_card_clicks), 2)
+        self.assertLessEqual(now, 2 * STUCK_SECONDS + 2.0)
+
+    def test_enter_trade_card_presses_again_while_the_card_page_stays(self):
+        # A dropped press leaves the card page up (Leo 2026-10-31 「補點」).
+        result, _now = self._timed_trade_card_entry(
+            lambda t: ScreenState.CARD_MENU if not self.trade_card_clicks[1:] else ScreenState.SANDBOX
+        )
+        self.assertTrue(result.success)
+        self.assertEqual(2, len(self.trade_card_clicks))
+
+    def test_enter_trade_card_does_not_press_again_off_the_card_page(self):
+        result, _now = self._timed_trade_card_entry(lambda _t: ScreenState.UNKNOWN)
+        self.assertFalse(result.success)
+        self.assertEqual(1, len(self.trade_card_clicks))
 
     def test_enter_trade_card_does_not_count_the_loading_screen(self):
         # Leo 2026-10-15 「我說的10秒是卡死 或者辨識不到」: 2K, the field came
@@ -4624,7 +4786,7 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
         self.assertFalse(trader._wait_for_purchase_confirmation(timeout=0.0))
         self.assertFalse(trader._no_favorites_seen)
 
-    def test_buy_home_confirmation_requires_keyword_votes_brightness_and_ocr(self):
+    def test_buy_home_confirmation_needs_enough_cues_and_brightness(self):
         announcement_signals = []
         task = SimpleNamespace(
             config={},
@@ -4638,10 +4800,11 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
         dimmed_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         frame = {"value": dimmed_frame}
         gacha_text = {"value": "抽抽乐"}
+        left_text = {"value": "我的小屋 经营管理格鲁TALK 街机游戏"}
 
         def ocr_text(_frame, name, **_kwargs):
             if name == "主页左列":
-                return "我的小屋 经营管理格鲁TALK 街机游戏"
+                return left_text["value"]
             return gacha_text["value"]
 
         vision = SimpleNamespace(
@@ -4660,6 +4823,7 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
         frame["value"] = bright_frame
         self.assertTrue(navigator._wait_for_cartridge_home(timeout=0.0))
         gacha_text["value"] = ""
+        left_text["value"] = "我的小屋 经营管理格鲁TALK"
         self.assertFalse(navigator._wait_for_cartridge_home(timeout=0.0))
 
     def test_return_home_update_notice_is_cleared_then_strictly_reconfirmed(self):
@@ -4837,14 +5001,14 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
             clicks,
         )
 
-    def test_screen_classification_only_reports_home_after_all_three_signals(self):
+    def test_screen_classification_reports_home_only_with_enough_cues(self):
         task = SimpleNamespace(
             config={},
             info_set=lambda *_args, **_kwargs: None,
         )
         result = MatchResult(-1.0, (0, 0), (0, 0))
         gacha_text = {"value": ""}
-        left_text = {"value": "我的小屋 格鲁TALK 街机游戏"}
+        left_text = {"value": "我的小屋 格鲁TALK"}
 
         def ocr_text(_frame, name, **_kwargs):
             if name == "主页左列":
@@ -4857,6 +5021,7 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
             passes=lambda *_args: False,
             threshold_for=lambda spec: spec.threshold,
             ocr_text=ocr_text,
+            ocr_boxes=lambda *_args, **_kwargs: [],
             simplify=lambda value: value,
         )
         navigator = Navigator(task, vision)
@@ -4911,19 +5076,13 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
         self.assertEqual(0.90, spec.min_zncc_score)
         self.assertIs(QUICK_SWITCH_TEMPLATE, SANDBOX_TEMPLATES[1])
 
-    def test_quick_switch_button_alone_is_a_valid_sandbox_signal(self):
+    def _classify_with(self, passing_names):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
         failed = MatchResult(-1.0, (0, 0), (0, 0))
-        quick_switch = MatchResult(
-            0.98,
-            (820, 980),
-            (60, 50),
-            pixel_score=0.91,
-            zncc_score=0.92,
-        )
+        hit = MatchResult(0.98, (820, 980), (60, 50), pixel_score=0.91, zncc_score=0.92)
 
         def match(_frame, spec):
-            return quick_switch if spec is QUICK_SWITCH_TEMPLATE else failed
+            return hit if spec.name in passing_names else failed
 
         def passes(result, spec):
             return (
@@ -4938,12 +5097,101 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
             threshold_for=lambda spec: spec.threshold,
             template_brightness_ratio=lambda *_args: 0.0,
             ocr_text=lambda *_args, **_kwargs: "",
+            ocr_boxes=lambda *_args, **_kwargs: [],
             simplify=lambda value: value,
         )
         navigator = Navigator(SimpleNamespace(config={}), vision)
         navigator.ensure_small_minimap = lambda: True
+        return navigator.classify(frame)
 
-        self.assertEqual(ScreenState.SANDBOX, navigator.classify(frame))
+    def test_quick_switch_button_with_a_field_key_cap_is_the_field(self):
+        # While walking only M stays (navigator_constants); on sand C hides.
+        for cap in ("箱庭按键C", "箱庭按键M", "箱庭按键Q"):
+            with self.subTest(cap=cap):
+                self.assertEqual(ScreenState.SANDBOX, self._classify_with({QUICK_SWITCH_TEMPLATE.name, cap}))
+
+    def test_quick_switch_button_with_only_the_h_cap_is_not_the_field(self):
+        # The restaurant's business screen: quick-switch button and H, no
+        # other cap (3 player frames, screen library 2026-11-05).  It used to
+        # be read as the field.
+        self.assertEqual(ScreenState.UNKNOWN, self._classify_with({QUICK_SWITCH_TEMPLATE.name, "箱庭按键H"}))
+        self.assertEqual(ScreenState.UNKNOWN, self._classify_with({QUICK_SWITCH_TEMPLATE.name}))
+
+    def _classify_loading(self, frame, corner_text="", ring_text=""):
+        failed = MatchResult(-1.0, (0, 0), (0, 0))
+
+        def ocr_text(_frame, name, **_kwargs):
+            return corner_text if "NOW LOADING" in name else ""
+
+        def ocr_boxes(_frame, name, **_kwargs):
+            return [SimpleNamespace(name=ring_text)] if ring_text and "加载圈" in name else []
+
+        vision = SimpleNamespace(
+            match=lambda _frame, _spec: failed,
+            passes=lambda *_args: False,
+            threshold_for=lambda spec: spec.threshold,
+            template_brightness_ratio=lambda *_args: 0.0,
+            ocr_text=ocr_text,
+            ocr_boxes=ocr_boxes,
+            simplify=lambda value: value,
+        )
+        navigator = Navigator(SimpleNamespace(config={}), vision)
+        navigator.ensure_small_minimap = lambda: True
+        return navigator.classify(frame)
+
+    def test_now_loading_is_loading(self):
+        # 4K PC clone 2026-11-05: black, 「NOW / LOADING」 bottom right, no
+        # BROWN DUST logo; it read as unknown.
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        frame[930:1025, 1590:1730] = 255
+        self.assertEqual(ScreenState.LOADING, self._classify_loading(frame, corner_text="NOW LOADING"))
+
+    def test_the_loading_ring_percent_on_a_scene_picture_is_loading(self):
+        # 镜中之战 / 餐厅 / 广场 entry: a lit scene picture, the ring bottom
+        # right with its percent (Leo 2026-11-05 「還有轉圈圈」).
+        frame = np.full((1080, 1920, 3), 180, dtype=np.uint8)
+        for text in ("0%", "89%", "94%", "100%"):
+            with self.subTest(text=text):
+                self.assertEqual(ScreenState.LOADING, self._classify_loading(frame, ring_text=text))
+
+    def test_a_price_change_is_not_a_loading_ring(self):
+        # 跑商 sell page: +112% read as 4112% near the corner.
+        frame = np.full((1080, 1920, 3), 180, dtype=np.uint8)
+        for text in ("4112%", "+112%", "+5%"):
+            with self.subTest(text=text):
+                self.assertNotEqual(ScreenState.LOADING, self._classify_loading(frame, ring_text=text))
+
+    def test_a_dark_screen_without_any_loading_sign_is_not_loading(self):
+        # Dark teleport map pages, a black screen with only the resource bar.
+        frame = np.full((1080, 1920, 3), 15, dtype=np.uint8)
+        self.assertNotEqual(ScreenState.LOADING, self._classify_loading(frame))
+
+    def test_field_cue_names_match_the_templates(self):
+        from src.tasks.map_trade.navigator_constants import (
+            FIELD_ALL_KEYCAP_TEMPLATES,
+            FIELD_KEYCAP_H_NAME,
+            SANDBOX_MINIMAP_TEMPLATE_NAME,
+        )
+
+        self.assertIn(FIELD_KEYCAP_H_NAME, [spec.name for spec in FIELD_ALL_KEYCAP_TEMPLATES])
+        self.assertEqual("箱庭小地图缩放按钮", SANDBOX_MINIMAP_TEMPLATE_NAME)
+
+    def test_a_dimmed_top_bar_marks_the_page_as_covered(self):
+        navigator = Navigator(SimpleNamespace(config={}, info_set=lambda *_args: None), SimpleNamespace())
+        page = np.full((1080, 1920, 3), 30, dtype=np.uint8)
+        page[10:50, 40:400] = 220  # white back button and title
+        covered = page.copy()
+        covered[10:50, 40:400] = 48  # the same, under a popup's dark layer
+        self.assertFalse(navigator.page_covered(page, ScreenState.SHOP))
+        self.assertTrue(navigator.page_covered(covered, ScreenState.SHOP))
+        # Only pages with a white top bar are judged.
+        self.assertFalse(navigator.page_covered(covered, ScreenState.SANDBOX))
+
+    def test_story_card_word_alone_is_not_the_card_menu(self):
+        # The trade shop lists 剧情游戏卡1..10 down its left side.
+        self.assertFalse(Navigator._card_menu_text("购买 洛兹 剧情游戏卡9 铁假面 剧情游戏卡10 初始化"))
+        self.assertTrue(Navigator._card_menu_text("最近 店长游戏卡 剧情游戏卡 角色"))
+        self.assertTrue(Navigator._card_menu_text("游戏卡珍藏集"))
 
     def test_trade_classify_requires_interaction_options_and_talent_cards(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
@@ -5046,6 +5294,7 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
                 "界面分类商店页": "购买 出售",
                 "界面分类商店标题": "仓库管理石怪 仓库 严加管理 天赋技能",
             }.get(name, ""),
+            ocr_boxes=lambda *_args, **_kwargs: [],
             simplify=lambda value: value,
         )
         navigator = Navigator(task, vision)
@@ -5073,6 +5322,7 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
             threshold_for=lambda spec: spec.threshold,
             template_brightness_ratio=lambda *_args: 0.0,
             ocr_text=lambda _frame, name, **_kwargs: texts.get(name, ""),
+            ocr_boxes=lambda *_args, **_kwargs: [],
             simplify=lambda value: value,
         )
         navigator = Navigator(task, vision)
@@ -5179,7 +5429,9 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
         result = navigator._return_home_pass()
 
         self.assertFalse(result.success)
-        self.assertEqual([(82, 36, 0.0)], actions)
+        # The shop page stayed: its back pressed once more (bug-prevention.md
+        # 3), never the dialog's 确认 that was not read.
+        self.assertEqual([(82, 36, 0.0), (82, 36, 0.0)], actions)
 
     def test_return_home_closes_sale_popup_before_discount_shop(self):
         actions = []
@@ -5202,9 +5454,13 @@ class BuyPhaseAndClassifyTest(unittest.TestCase):
         navigator.classify_trade = lambda: ScreenState.SHOP
         with patch("src.tasks.map_trade.navigator_trade.monotonic", lambda: clock[0]):
             navigator._return_home_pass()
-        self.assertEqual([("popup", SALE_CLOSE_POINT), ("shop",)], actions)
-        # The sale popup's two looks, then the merchant menu looked for.
-        self.assertAlmostEqual(2 * SALE_OCR_INTERVAL + MERCHANT_BACK_LOOK_SECONDS, clock[0], places=6)
+        # The shop stayed after its back: pressed once more.
+        self.assertEqual([("popup", SALE_CLOSE_POINT), ("shop",), ("shop",)], actions)
+        # The sale popup's two looks, then the merchant menu looked for after
+        # each back.
+        self.assertAlmostEqual(
+            2 * SALE_OCR_INTERVAL + 2 * MERCHANT_BACK_LOOK_SECONDS, clock[0], places=6
+        )
 
     def test_return_home_stops_if_sale_popup_close_is_unconfirmed(self):
         for after_click in ("姜黄 拥有54个 可购买54个 出售", ""):

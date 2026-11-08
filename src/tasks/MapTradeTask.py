@@ -74,8 +74,6 @@ def _migrate_collection_config(legacy: dict) -> None:
 
     key_map = {
         "识别成功后等待秒数": "识别成功后等待秒数",
-        "启用": "启用",
-        "执行地图采集": "执行地图采集",
         LEGACY_VISION_THRESHOLD_KEY: MAP_VISION_THRESHOLD_KEY,
         LEGACY_OCR_THRESHOLD_KEY: MAP_OCR_THRESHOLD_KEY,
         "加载页面等待秒数": "加载页面等待秒数",
@@ -135,7 +133,9 @@ class MapAutomationTaskBase(BaseBD2Task):
         self.info_set("状态", f"{self.task_log_name}启动。")
         try:
             for index, (name, config_key, action) in enumerate(phases):
-                if isinstance(config_key, (tuple, list, set)):
+                if config_key is None:
+                    enabled = True  # no switch: the phase always runs
+                elif isinstance(config_key, (tuple, list, set)):
                     enabled = any(bool(self.config.get(key, True)) for key in config_key)
                 else:
                     enabled = bool(self.config.get(config_key, True))
@@ -246,6 +246,19 @@ class MapAutomationTaskBase(BaseBD2Task):
             returned = navigator.return_home()
         except (TaskDisabledException, FinishedException):
             raise
+        except FrozenScreen as exc:
+            # The stuck guard, not a program error: say why in player words
+            # (a player's v0.2.27 run logged it as 「返回章节主页异常。
+            # Traceback」), and start the watch over, or the fired watch failed
+            # the screenshot and the phase run again from home at once.
+            why = str(exc) or (
+                f"画面 {FROZEN_SCREEN_SECONDS:.0f} 秒没有变化（点了没反应或认不出画面）"
+            )
+            self.log_warning(f"{self.task_log_name}：返回章节主页时{why}，改用通用返回。")
+            self._save_diagnostic(f"{self.diagnostic_prefix}_return_home_frozen")
+            if getattr(self, "_frozen_watch", None) is not None:
+                self._frozen_watch = FrozenWatch()
+            return self._recover_home_after_trade()
         except Exception as exc:
             self.log_error(f"{self.task_log_name}：返回章节主页异常。", exc)
             self._save_diagnostic(f"{self.diagnostic_prefix}_return_home_error")
@@ -278,13 +291,18 @@ class MapAutomationTaskBase(BaseBD2Task):
 
     def _save_diagnostic(self, name: str) -> None:
         try:
-            self.save_frame(name, self.capture_frame())
+            self.save_frame(name, self.diagnostic_frame())
+        except (TaskDisabledException, FinishedException):
+            raise
         except Exception as exc:
             self.log_warning(f"诊断截图保存失败：{exc}")
 
 class MapTradeTask(MapAutomationTaskBase):
     """Daily merchant task, separated from weekly map collection."""
     recover_home_on_failure = True
+    # Leo 2026-11-05 「精煉 製作 爛裝跑商 救贖之塔 這些你就重作沒關係 資源量微乎其微」:
+    # a failed or frozen run goes home and runs once more, like the others.
+    frozen_retry = True
     # Started on another page (live 4K 2026-10-11, the Loyal Maid event page):
     # the trade navigator knows only its own screens, pressed nothing, and
     # 买 and 料理 were lost.  The generic way home runs first (Leo: 可以改).
@@ -298,7 +316,6 @@ class MapTradeTask(MapAutomationTaskBase):
     # and skipping it let 卖 sell them uncooked (player, 2026-10-19).  Dishes
     # without enough ingredients are grey and skipped anyway.
     status_keys = [
-        "启用",
         "状态",
         "当前阶段",
         "导航状态",
@@ -335,7 +352,6 @@ class MapTradeTask(MapAutomationTaskBase):
 
         self.default_config.update(
             {
-                "启用": True,
                 "制作料理": True,
                 "料理清单": list(MAIN_COOKING_RECIPES),
                 "5星料理": [],
@@ -452,10 +468,6 @@ class MapTradeTask(MapAutomationTaskBase):
         return result
 
     def run(self):
-        if not bool(self.config.get("启用", True)):
-            self.info_set("状态", "跑商已禁用。")
-            return True
-
         vision = Vision(self)
         navigator = Navigator(self, vision)
         progress = ProgressStore()
