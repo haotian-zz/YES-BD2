@@ -5914,10 +5914,15 @@ class PlainShopForSellingTest(unittest.TestCase):
         navigator.classify_trade = lambda: ScreenState.SHOP
         navigator.classify = lambda: ScreenState.SHOP
         navigator._click_chapter_home_button = lambda: clicks.append(("home",))
+        navigator._discount_close_dialog_shown = lambda: False
+        navigator._back_at_merchant_after_close = lambda: False
         result = navigator._return_home_from_discount_shop()
+        # Answered 关闭商店 with the shop still up is not closed: the shop's
+        # back is pressed again, and the home button never.
         self.assertFalse(result.success)
-        self.assertEqual("点了「关闭商店」商店还在", result.message)
-        self.assertEqual([("close",), ("click", DISCOUNT_SHOP_CLOSE_POINT)], clicks)
+        self.assertEqual([("close",), ("click", DISCOUNT_SHOP_CLOSE_POINT)], clicks[:2])
+        self.assertGreaterEqual(clicks.count(("close",)), 2)
+        self.assertNotIn(("home",), clicks)
 
     def _home_button_missed(self, state):
         clicks = []

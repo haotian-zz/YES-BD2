@@ -2310,7 +2310,9 @@ class SandboxNavigationMixin:
         still_open = self._direct_teleport_page_still_open()
         if still_open or (still_open is None and not self._teleport_loading_seen):
             self._status("传送阵地图传送阵", "点了没开始传送，传送页还开着，再点一次")
-            self.task.log_info("跑图：点了传送页上的传送阵，传送页还开着，再点一次。")
+            log = getattr(self.task, "log_info", None)
+            if callable(log):
+                log("跑图：点了传送页上的传送阵，没开始传送，再点一次。")
             self.vision.click_client(teleport.center, frame_shape, after_sleep=0.0)  # 不用确认：只补这一次
             self._teleport_loading_seen = self._wait_for_loading_screen(
                 TELEPORT_MAP_TRAVEL_SETTLE_SECONDS
