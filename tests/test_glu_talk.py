@@ -122,6 +122,133 @@ class ChatTest(unittest.TestCase):
         done = screen.chat_step([box("进行相遇事件", 1288, 400), box("完成相遇事件", 1288, 700)])
         self.assertEqual("done", done.kind)
 
+    def test_episode_end_as_the_last_line(self):
+        # Live 2026-11-08: 阿奇拉's talk after the day-before encounter.
+        boxes = [
+            box("你还真是什么话都能这么随口说出来啊?", 1290, 660),
+            box("…反正你满意了，对吧？那就行了！", 1290, 750),
+            box("EP7. 对话结束", 1270, 830),
+        ]
+        self.assertEqual("ended", screen.chat_step(boxes).kind)
+
+    def test_line_under_the_episode_end_is_a_new_message(self):
+        boxes = [box("EP7. 对话结束", 1270, 500), box("店长，在干嘛?", 1240, 600)]
+        self.assertEqual("wait", screen.chat_step(boxes).kind)
+
+    def test_old_episode_end_above_a_card(self):
+        boxes = [box("EP2. 对话结束", 1270, 380), box("相遇事件", 1173, 669), box("进行相遇事件", 1288, 813)]
+        self.assertEqual("start", screen.chat_step(boxes).kind)
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += float(seconds)
+
+
+def glu_task(clock: FakeClock, frames: list[tuple[str, str]]):
+    """A GluTalkTask with the screen played from ``frames``: (kind, text) per
+    look, kind window / reward / effect; the last one stays."""
+    from src.tasks.GluTalkTask import GluTalkTask
+
+    task = object.__new__(GluTalkTask)
+    state = {"index": 0}
+    task.clicks = []
+    task.logs = []
+
+    def capture_frame():
+        frame = frames[min(state["index"], len(frames) - 1)]
+        state["index"] += 1
+        clock.sleep(0.3)
+        return frame
+
+    task.capture_frame = capture_frame
+    task._reference_boxes = lambda frame, _roi, _name: [frame]
+    task._boxes_text = lambda boxes: "" if boxes[0][0] == "window" else boxes[0][1]
+    task._window_open = lambda frame: frame[0] == "window"
+    task._header_text = lambda frame: frame[1]
+
+    def click(*point, after_sleep=0.0):
+        task.clicks.append(point)
+        clock.sleep(after_sleep)
+
+    task._click_reference = click
+    task.log_info = lambda message, *_args, **_kwargs: task.logs.append(message)
+    task.sleep = clock.sleep
+    task._save_flow_diagnostic = lambda *_args, **_kwargs: None
+    return task
+
+
+class AfterSceneTest(unittest.TestCase):
+    def setUp(self):
+        from src.tasks import GluTalkTask as module
+
+        self.module = module
+        self.clock = FakeClock()
+        self.old_monotonic = module.monotonic
+        module.monotonic = self.clock
+
+    def tearDown(self):
+        self.module.monotonic = self.old_monotonic
+
+    def test_window_before_the_reward_is_not_back(self):
+        # Live 2026-11-08 提尔: the window with the count still 1, then the
+        # reward and the picture over it.
+        frames = [("window", "GLU TALK 今日的剩余相遇 | 1")] * 4 + [
+            ("reward", "获得好感度奖励 澄心无邪兔女郎 提尔 50"),
+            ("effect", "获得好感度特效！ 主界面设置"),
+            ("effect", "获得好感度特效！ 主界面设置"),
+            ("window", "GLU TALK 今日的剩余相遇 | 0"),
+        ]
+        task = glu_task(self.clock, frames)
+        row = screen.Row("澄心无邪兔女郎 提尔", 2, 500)
+
+        self.assertTrue(self.module.GluTalkTask._after_scene(task, row, 1))
+        self.assertEqual(
+            [screen.REWARD_TAP_POINT, screen.EFFECT_BACK_POINT, screen.EFFECT_BACK_POINT], task.clicks
+        )
+
+    def test_count_down_without_a_reward_is_back_after_a_moment(self):
+        task = glu_task(self.clock, [("window", "GLU TALK 今日的剩余相遇 | 1")])
+        row = screen.Row("水上乐园女王 威廉明娜", 3, 500)
+
+        self.assertTrue(self.module.GluTalkTask._after_scene(task, row, 2))
+        self.assertEqual([], task.clicks)
+        self.assertLess(self.clock.now, self.module.AFTER_SCENE_WINDOW_SECONDS)
+
+    def test_window_with_the_same_count_waits_for_the_reward_a_while(self):
+        task = glu_task(self.clock, [("window", "GLU TALK 今日的剩余相遇 | 1")])
+        row = screen.Row("澄心无邪兔女郎 提尔", 2, 500)
+
+        self.assertTrue(self.module.GluTalkTask._after_scene(task, row, 1))
+        self.assertGreaterEqual(self.clock.now, self.module.AFTER_SCENE_WINDOW_SECONDS)
+        self.assertTrue(any("没看到好感度奖励" in line for line in task.logs))
+
+
+class PlayChatTest(unittest.TestCase):
+    def test_episode_end_moves_on_in_seconds(self):
+        from src.tasks import GluTalkTask as module
+
+        clock = FakeClock()
+        old = module.monotonic
+        module.monotonic = clock
+        try:
+            task = object.__new__(module.GluTalkTask)
+            task._chat_boxes = lambda: [box("…那就行了！", 1290, 750), box("EP7. 对话结束", 1270, 830)]
+            task.sleep = clock.sleep
+            task.log_info = lambda *_args, **_kwargs: None
+            task._save_flow_diagnostic = lambda *_args, **_kwargs: None
+            step = module.GluTalkTask._play_chat(task, screen.Row("被封印的欲望 阿奇拉", 7, 500))
+        finally:
+            module.monotonic = old
+        self.assertEqual("ended", step.kind)
+        self.assertLess(clock.now, 10)
+
 
 if __name__ == "__main__":
     unittest.main()

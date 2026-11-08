@@ -59,6 +59,10 @@ CHAT_ROI = (1010, 300, 530, 570)
 SEND_WORD = "发送消息"
 START_WORD = "进行相遇事件"
 DONE_WORD = "完成相遇事件"
+# 「—— EP7. 对话结束 ——」 under the last line: the episode's talk after its
+# encounter is over and the next encounter has not come yet (live 2026-11-08,
+# the three people met the day before).
+END_WORD = "对话结束"
 
 # -- encounter ----------------------------------------------------------------
 DIALOG_ROI = (660, 330, 600, 420)
@@ -203,15 +207,17 @@ def choose(rows: list[Row], level_below: int = LEVEL_MAX) -> list[Row]:
 
 @dataclass(frozen=True)
 class ChatStep:
-    kind: str  # reply | start | done | wait
+    kind: str  # reply | start | done | ended | wait
     box: object | None = None
 
 
 def chat_step(boxes: list) -> ChatStep:
     """What the chat panel wants next, from its OCR boxes (any coords).
 
-    The lowest of 发送消息 / 进行相遇事件 / 完成相遇事件 is the current one:
-    older cards and replies stay above it in the scrolled history.
+    The lowest of 发送消息 / 进行相遇事件 / 完成相遇事件 / 对话结束 is the
+    current one: older cards, replies and episode ends stay above it in the
+    scrolled history.  对话结束 counts only with nothing under it; a line
+    under it is a new message coming in.
     """
     def centre_y(box) -> float:
         return float(box.y) + float(box.height) / 2
@@ -226,17 +232,21 @@ def chat_step(boxes: list) -> ChatStep:
             marks.append(("start", box))
         elif DONE_WORD in text:
             marks.append(("done", box))
+        elif END_WORD in text:
+            marks.append(("ended", box))
         elif text == SEND_WORD or (SEND_WORD in text and len(text) <= len(SEND_WORD) + 1):
             marks.append(("send", box))
     if not marks:
         return ChatStep("wait")
     kind, mark = max(marks, key=lambda item: centre_y(item[1]))
+    below = [
+        box for box in boxes
+        if centre_y(box) > centre_y(mark) + 10 and flat(box) and box is not mark
+    ]
     if kind == "send":
-        below = [
-            box for box in boxes
-            if centre_y(box) > centre_y(mark) + 10 and flat(box) and box is not mark
-        ]
         if not below:
             return ChatStep("wait")
         return ChatStep("reply", min(below, key=centre_y))
+    if kind == "ended" and below:
+        return ChatStep("wait")
     return ChatStep(kind, mark)

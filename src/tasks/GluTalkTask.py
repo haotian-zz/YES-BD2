@@ -34,8 +34,17 @@ LIST_SCROLL_ROUNDS = 8
 CHAT_SECONDS = 90.0
 CHAT_REPLIES_MAX = 30
 CHAT_POLL_SECONDS = 1.0
+# 「对话结束」 as the last thing in the chat this long: no card is coming.
+CHAT_ENDED_SECONDS = 4.0
 SCENE_SECONDS = 90.0
 AFTER_SCENE_SECONDS = 40.0
+# After the scene the window can show before the reward does (live
+# 2026-11-08): it counts as back once it stayed up a moment after the reward
+# (the 特效 picture can follow it), a moment after the count went down, or
+# after this long with neither.
+AFTER_REWARD_SECONDS = 1.0
+AFTER_SCENE_COUNT_DOWN_SECONDS = 3.0
+AFTER_SCENE_WINDOW_SECONDS = 15.0
 KEY_F2 = 0x71
 KEY_ESC = 0x1B
 
@@ -87,7 +96,7 @@ class GluTalkTask(_ClaimTaskBase):
         for row in targets:
             if left is not None and left <= 0:
                 break
-            outcome = self._encounter(row)
+            outcome = self._encounter(row, left)
             if outcome == "done":
                 done.append(f"{row.name}（{row.level}→{row.level + 1}）")
                 left = self._remaining()
@@ -289,8 +298,9 @@ class GluTalkTask(_ClaimTaskBase):
         key = row.key[-3:] if len(row.key) > 3 else row.key
         return any(key and key in normalize_ocr_text(getattr(b, "name", "")) for b in boxes)
 
-    def _encounter(self, row: screen.Row) -> str:
-        """「done」, 「used up」 or why not (player words)."""
+    def _encounter(self, row: screen.Row, left: int | None = None) -> str:
+        """「done」, 「used up」 or why not (player words); ``left`` is the
+        header count before it."""
         self.info_set("当前阶段", f"{LABEL}：{row.name}")
         target = self._find_row(row)
         if target is None:
@@ -303,23 +313,38 @@ class GluTalkTask(_ClaimTaskBase):
         )
         if not opened:
             return "点了没打开聊天"
-        card = self._play_chat(row)
-        if card is None:
+        step = self._play_chat(row)
+        if step.kind == "ended":
+            return "这段聊天已经结束，下一次相遇还没来"
+        if step.kind == "done":
+            return "相遇事件已经完成，没有新的"
+        if step.kind != "start":
             return "聊天里没等到「进行相遇事件」"
-        return self._start_encounter(row, card)
+        return self._start_encounter(row, step.box, left)
 
-    def _play_chat(self, row: screen.Row):
-        """Press the replies until the 进行相遇事件 card; its box, else None."""
+    def _play_chat(self, row: screen.Row) -> screen.ChatStep:
+        """Press the replies until the 进行相遇事件 card (kind start, its box),
+        the episode's end (ended), an encounter already done (done), else wait."""
         started = monotonic()  # 自己等：聊天一句句来，按回复数和总时长收尾
         replies = 0
         last_reply = ""
+        ended_since = None
         while replies <= CHAT_REPLIES_MAX:
             step = screen.chat_step(self._chat_boxes())
             if step.kind == "start":
-                return step.box
+                return step
             if step.kind == "done":
                 self.log_info(f"{LABEL}：{row.name}的相遇事件已经完成，没有新的。")
-                return None
+                return step
+            if step.kind == "ended":
+                # 自己等：「对话结束」 stays the last line a few seconds before it counts.
+                ended_since = ended_since if ended_since is not None else monotonic()
+                if monotonic() - ended_since >= CHAT_ENDED_SECONDS:
+                    text = str(getattr(step.box, "name", ""))
+                    self.log_info(f"{LABEL}：{row.name}的聊天停在「{text}」，没有相遇事件卡片，换下一个人。")
+                    return step
+            else:
+                ended_since = None
             if step.kind == "reply":
                 text = str(getattr(step.box, "name", ""))
                 if text == last_reply:
@@ -338,7 +363,7 @@ class GluTalkTask(_ClaimTaskBase):
                 break
             self.sleep(CHAT_POLL_SECONDS)
         self._save_flow_diagnostic("glu_talk_chat_no_card")
-        return None
+        return screen.ChatStep("wait")
 
     def _dialog_text(self) -> str:
         boxes = self._reference_boxes(self.capture_frame(), screen.DIALOG_ROI, "相遇事件确认")
@@ -347,7 +372,7 @@ class GluTalkTask(_ClaimTaskBase):
     def _dialog_shown(self) -> bool:
         return keyword_match_count(self._dialog_text(), screen.DIALOG_WORDS) >= 1
 
-    def _start_encounter(self, row: screen.Row, card) -> str:
+    def _start_encounter(self, row: screen.Row, card, left: int | None = None) -> str:
         shown = self.press_and_confirm(
             f"{LABEL}：{row.name} 进行相遇事件",
             lambda: self._click_reference_box(card, after_sleep=0.8),
@@ -387,7 +412,7 @@ class GluTalkTask(_ClaimTaskBase):
             return "按了确认没进相遇剧情"
         if not self._skip_scene(row):
             return "相遇剧情没能跳过"
-        if not self._after_scene(row):
+        if not self._after_scene(row, left):
             return "相遇后没回到格鲁TALK"
         return "done"
 
@@ -437,24 +462,51 @@ class GluTalkTask(_ClaimTaskBase):
             or self._window_open()
         )
 
-    def _after_scene(self, row: screen.Row) -> bool:
-        """Close 获得好感度奖励 and the 好感度特效 picture until the window shows."""
+    def _after_scene(self, row: screen.Row, left_before: int | None = None) -> bool:
+        """Close 获得好感度奖励 and the 好感度特效 picture until the window is back.
+
+        Live 2026-11-08: after 提尔's skipped scene the window showed with the
+        count still 1 and the reward came over it seconds later, after the
+        task had gone on to the next person.  So the window counts as back
+        once the reward was closed, a moment after the count went below
+        ``left_before``, or after it stayed up a while with neither.
+        """
         started = monotonic()  # 自己等：奖励和特效画面一个个关，直到视窗回来
+        rewarded = False
+        window_since = None
         while monotonic() - started < AFTER_SCENE_SECONDS:
             frame = self.capture_frame()
-            if self._window_open(frame):
-                return True
             text = self._boxes_text(self._reference_boxes(frame, None, "相遇奖励"))
             if keyword_match_count(text, screen.REWARD_WORDS) >= 1:
                 self.log_info(f"{LABEL}：{row.name}升级奖励（{text[:40]}），点空白处关闭。")
                 self._click_reference(*screen.REWARD_TAP_POINT, after_sleep=1.5)  # 不用确认：下一轮看画面
+                rewarded = True
+                window_since = None
                 continue
             if keyword_match_count(text, screen.EFFECT_WORDS) >= 1:
                 # Never 主界面设置 (bottom right): the back arrow top left.  The
                 # first press may only end the picture's fade-in; the next
                 # round presses again.  No Esc: on the window it closes GLU TALK.
                 self._click_reference(*screen.EFFECT_BACK_POINT, after_sleep=1.5)  # 不用确认：下一轮看画面
+                rewarded = True
+                window_since = None
                 continue
+            if self._window_open(frame):
+                now = monotonic()  # 自己等：视窗先出来时等奖励、特效盖上来
+                window_since = now if window_since is None else window_since
+                counted = False
+                if rewarded:
+                    settle = AFTER_REWARD_SECONDS
+                else:
+                    left = screen.read_remaining(self._header_text(frame))
+                    counted = left is not None and left_before is not None and left < left_before
+                    settle = AFTER_SCENE_COUNT_DOWN_SECONDS if counted else AFTER_SCENE_WINDOW_SECONDS
+                if now - window_since >= settle:
+                    if not rewarded and not counted:
+                        self.log_info(f"{LABEL}：{row.name}相遇后回到视窗，没看到好感度奖励，剩余次数也没读到减少。")
+                    return True
+            else:
+                window_since = None
             self.sleep(1.0)
         self._save_flow_diagnostic("glu_talk_after_scene")
         return False
