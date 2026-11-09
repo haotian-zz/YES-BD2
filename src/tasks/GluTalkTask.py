@@ -291,8 +291,24 @@ class GluTalkTask(_ClaimTaskBase):
 
     # -- one encounter ----------------------------------------------------------------
 
-    def _chat_boxes(self) -> list:
-        return self._reference_boxes(self.capture_frame(), screen.CHAT_ROI, "格鲁TALK聊天")
+    def _chat_boxes(self, frame=None) -> list:
+        frame = self.capture_frame() if frame is None else frame
+        return self._reference_boxes(frame, screen.CHAT_ROI, "格鲁TALK聊天")
+
+    def _chat_look(self) -> tuple[screen.ChatStep, tuple[str, tuple[int, int]] | None]:
+        """The chat's step and the reply to press on it: (text, point), or
+        None.  A reply of only 「…」 is pressed by its bubble."""
+        frame = self.capture_frame()
+        step = screen.chat_step(self._chat_boxes(frame))
+        if step.kind == "reply":
+            box = step.box
+            point = (round(box.x + box.width / 2), round(box.y + box.height / 2))
+            return step, (str(getattr(box, "name", "")), point)
+        if step.kind == "send":
+            point = screen.reply_bubble(screen.to_reference(frame), step.box)
+            if point is not None:
+                return step, ("…", point)
+        return step, None
 
     def _chat_names(self, boxes: list, row: screen.Row) -> bool:
         key = row.key[-3:] if len(row.key) > 3 else row.key
@@ -330,7 +346,7 @@ class GluTalkTask(_ClaimTaskBase):
         last_reply = ""
         ended_since = None
         while replies <= CHAT_REPLIES_MAX:
-            step = screen.chat_step(self._chat_boxes())
+            step, reply = self._chat_look()
             if step.kind == "start":
                 return step
             if step.kind == "done":
@@ -345,18 +361,18 @@ class GluTalkTask(_ClaimTaskBase):
                     return step
             else:
                 ended_since = None
-            if step.kind == "reply":
-                text = str(getattr(step.box, "name", ""))
+            if reply is not None:
+                text, point = reply
                 if text == last_reply:
                     # The same reply still up a moment after its press: let
                     # the chat move on before pressing it again.
                     self.sleep(CHAT_POLL_SECONDS)
-                    step = screen.chat_step(self._chat_boxes())
-                    if step.kind != "reply":
+                    _step, reply = self._chat_look()
+                    if reply is None:
                         continue
-                    text = str(getattr(step.box, "name", ""))
+                    text, point = reply
                 self.log_info(f"{LABEL}：{row.name}的聊天回复「{text}」。")
-                self._click_reference_box(step.box, after_sleep=1.0)  # 不用确认：下一轮读聊天
+                self._click_reference(*point, after_sleep=1.0)  # 不用确认：下一轮读聊天
                 replies += 1
                 last_reply = text
             if monotonic() - started >= CHAT_SECONDS:

@@ -12,12 +12,14 @@ from src.tasks.glu_talk import screen
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "glu_talk"
 # Crops of 1080p frames at (495, 300), bd2 session 2026-11-06.
 CROP_ORIGIN = (495, 300)
+# The chat panel (CHAT_ROI), bd2 session 2026-11-09.
+CHAT_ORIGIN = (1010, 300)
 
 
-def frame_with(name: str) -> np.ndarray:
+def frame_with(name: str, origin: tuple[int, int] = CROP_ORIGIN) -> np.ndarray:
     crop = cv2.imread(str(FIXTURES / name))
     frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
-    x, y = CROP_ORIGIN
+    x, y = origin
     frame[y : y + crop.shape[0], x : x + crop.shape[1]] = crop
     return frame
 
@@ -103,8 +105,11 @@ class ChatTest(unittest.TestCase):
         self.assertEqual("reply", step.kind)
         self.assertEqual("你要给我做饭?", step.box.name)
 
-    def test_send_without_its_reply_yet_waits(self):
-        self.assertEqual("wait", screen.chat_step([box("发送消息", 1090, 768)]).kind)
+    def test_send_without_reply_text(self):
+        # Not up yet, or a reply of only 「…」: reply_bubble tells which.
+        step = screen.chat_step([box("发送消息", 1090, 768)])
+        self.assertEqual("send", step.kind)
+        self.assertEqual("发送消息", step.box.name)
         self.assertEqual("wait", screen.chat_step([box("嘿嘿，好像真是这样。", 1234, 444)]).kind)
 
     def test_card_to_start(self):
@@ -138,6 +143,28 @@ class ChatTest(unittest.TestCase):
     def test_old_episode_end_above_a_card(self):
         boxes = [box("EP2. 对话结束", 1270, 380), box("相遇事件", 1173, 669), box("进行相遇事件", 1288, 813)]
         self.assertEqual("start", screen.chat_step(boxes).kind)
+
+
+class ReplyBubbleTest(unittest.TestCase):
+    # Live 2026-11-09 威廉明娜: 「发送消息」 and a reply of only 「…」, which
+    # OCR does not read; the chat waited 75 s for a card that never came.
+    SEND = box("发送消息", 1098, 767, width=110)
+
+    def test_blank_reply_found_by_its_bubble(self):
+        point = screen.reply_bubble(frame_with("chat_blank_reply.png", CHAT_ORIGIN), self.SEND)
+        self.assertIsNotNone(point)
+        x, y = point
+        self.assertTrue(1200 <= x <= 1340, point)
+        self.assertTrue(805 <= y <= 828, point)
+
+    def test_no_bubble_yet(self):
+        frame = frame_with("chat_blank_reply.png", CHAT_ORIGIN)
+        frame[785:850, 1030:1510] = (198, 184, 172)  # the panel's grey
+        self.assertIsNone(screen.reply_bubble(frame, self.SEND))
+
+    def test_white_message_is_not_a_reply(self):
+        frame = frame_with("chat_blank_reply.png", CHAT_ORIGIN)
+        self.assertIsNone(screen.reply_bubble(frame, box("发送消息", 1098, 640, width=110)))
 
 
 class FakeClock:
@@ -239,7 +266,8 @@ class PlayChatTest(unittest.TestCase):
         module.monotonic = clock
         try:
             task = object.__new__(module.GluTalkTask)
-            task._chat_boxes = lambda: [box("…那就行了！", 1290, 750), box("EP7. 对话结束", 1270, 830)]
+            task.capture_frame = lambda: np.zeros((1080, 1920, 3), dtype=np.uint8)
+            task._chat_boxes = lambda _frame=None: [box("…那就行了！", 1290, 750), box("EP7. 对话结束", 1270, 830)]
             task.sleep = clock.sleep
             task.log_info = lambda *_args, **_kwargs: None
             task._save_flow_diagnostic = lambda *_args, **_kwargs: None
@@ -247,6 +275,43 @@ class PlayChatTest(unittest.TestCase):
         finally:
             module.monotonic = old
         self.assertEqual("ended", step.kind)
+        self.assertLess(clock.now, 10)
+
+    def test_blank_reply_pressed_by_its_bubble(self):
+        from src.tasks import GluTalkTask as module
+
+        clock = FakeClock()
+        old = module.monotonic
+        module.monotonic = clock
+        frame = frame_with("chat_blank_reply.png", CHAT_ORIGIN)
+        message = box("像这种傻乎乎、又有点难为情的笑容", 1290, 690, width=330)
+        looks = [
+            [message, box("发送消息", 1098, 767, width=110)],
+            [message, box("相遇事件", 1173, 669), box("进行相遇事件", 1288, 813)],
+        ]
+        state = {"look": 0}
+        clicks, logs = [], []
+
+        def chat_boxes(_frame=None):
+            boxes = looks[min(state["look"], len(looks) - 1)]
+            state["look"] += 1
+            return boxes
+
+        try:
+            task = object.__new__(module.GluTalkTask)
+            task.capture_frame = lambda: frame
+            task._chat_boxes = chat_boxes
+            task._click_reference = lambda x, y, after_sleep=0.0: clicks.append((x, y))
+            task.sleep = clock.sleep
+            task.log_info = lambda message, *_args, **_kwargs: logs.append(message)
+            task._save_flow_diagnostic = lambda *_args, **_kwargs: None
+            step = module.GluTalkTask._play_chat(task, screen.Row("水上乐园女王 威廉明娜", 4, 500))
+        finally:
+            module.monotonic = old
+        self.assertEqual("start", step.kind)
+        self.assertEqual(1, len(clicks))
+        self.assertTrue(805 <= clicks[0][1] <= 828, clicks)
+        self.assertTrue(any("「…」" in line for line in logs), logs)
         self.assertLess(clock.now, 10)
 
 

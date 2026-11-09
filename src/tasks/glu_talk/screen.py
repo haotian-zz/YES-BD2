@@ -64,6 +64,15 @@ DONE_WORD = "完成相遇事件"
 # the three people met the day before).
 END_WORD = "对话结束"
 
+# The reply under 「发送消息」 is a light blue bubble (BGR 255,231,177 at
+# 1080p) about 49 below the label.  A reply of only 「…」 has no text for OCR
+# (live 2026-11-09, 格兰希特 and 威廉明娜 waited out the chat): the bubble
+# shows the reply is there.
+REPLY_BUBBLE_X = (1050, 1490)
+REPLY_BUBBLE_BELOW_SEND = (20, 80)  # rows under the label's centre
+REPLY_BUBBLE_ROW_SHARE = 0.6  # a row inside the bubble is mostly blue
+REPLY_BUBBLE_MIN_ROWS = 12  # the bubble is about 40 rows tall
+
 # -- encounter ----------------------------------------------------------------
 DIALOG_ROI = (660, 330, 600, 420)
 DIALOG_WORDS = ("是否要进行相遇事件",)
@@ -207,7 +216,9 @@ def choose(rows: list[Row], level_below: int = LEVEL_MAX) -> list[Row]:
 
 @dataclass(frozen=True)
 class ChatStep:
-    kind: str  # reply | start | done | ended | wait
+    # send: 「发送消息」 with no text read under it (the reply not up yet, or
+    # a reply of only 「…」; reply_bubble tells which).
+    kind: str  # reply | send | start | done | ended | wait
     box: object | None = None
 
 
@@ -245,8 +256,26 @@ def chat_step(boxes: list) -> ChatStep:
     ]
     if kind == "send":
         if not below:
-            return ChatStep("wait")
+            return ChatStep("send", mark)
         return ChatStep("reply", min(below, key=centre_y))
     if kind == "ended" and below:
         return ChatStep("wait")
     return ChatStep(kind, mark)
+
+
+def reply_bubble(reference: np.ndarray, send_box) -> tuple[int, int] | None:
+    """Centre of the light blue reply bubble under 「发送消息」 (reference
+    coords), None while it is not there."""
+    centre = float(send_box.y) + float(send_box.height) / 2
+    x0, x1 = REPLY_BUBBLE_X
+    top = max(0, int(centre + REPLY_BUBBLE_BELOW_SEND[0]))
+    bottom = min(reference.shape[0], int(centre + REPLY_BUBBLE_BELOW_SEND[1]))
+    if bottom - top < REPLY_BUBBLE_MIN_ROWS:
+        return None
+    roi = reference[top:bottom, x0:x1, :3].astype(np.int16)
+    blue, green, red = roi[:, :, 0], roi[:, :, 1], roi[:, :, 2]
+    mask = (blue > 235) & (green > 205) & (green < 250) & (red > 150) & (red < 205)
+    rows = np.flatnonzero(mask.mean(axis=1) >= REPLY_BUBBLE_ROW_SHARE)
+    if len(rows) < REPLY_BUBBLE_MIN_ROWS:
+        return None
+    return (x0 + x1) // 2, int(round(top + float(rows.mean())))
