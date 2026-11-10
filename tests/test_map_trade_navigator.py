@@ -760,6 +760,60 @@ class NavigatorTest(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertIn("艾琳", result.message)
 
+    def _restart_navigator(self, page_mode, calls):
+        card = CARD_BY_ID["Q_sp10"]
+        navigator = Navigator(
+            SimpleNamespace(log_info=lambda text: calls.append(("log", text))),
+            SimpleNamespace(capture=lambda: np.zeros((1080, 1920, 3), np.uint8)),
+        )
+        navigator._status = lambda *_args: None
+        navigator._detect_map_page_mode = lambda _frame: SimpleNamespace(mode=page_mode)
+        navigator._close_confirmed_map_page = lambda modes, **_k: (
+            calls.append(("close", tuple(modes)))
+            or NavigationResult(True, ScreenState.SANDBOX)
+        )
+        navigator.ensure_small_minimap = lambda: calls.append(("minimap",)) or True
+        navigator._click_sandbox_teleport_interaction = lambda *a, **k: (
+            calls.append(("hand",)) or False
+        )
+        navigator._travel_to_hunting_ground = lambda: "艾琳"
+        navigator.current_collection_target = lambda _card: card.targets[0].key
+        return card, navigator
+
+    def test_restart_closes_a_teleport_page_left_open_first(self):
+        # bd2 会话 2026-11-10 第10章: both presses on 官邸地下 were lost and
+        # 移动魔法阵 stayed open; the hand, the area map and the ≡ menu all
+        # failed under it.
+        calls = []
+        card, navigator = self._restart_navigator(MapPageMode.DIRECT_TELEPORT, calls)
+
+        result = navigator.prepare_collection_main_area(card.card_id, via_hunting_ground=True)
+
+        self.assertTrue(result.success, result.message)
+        self.assertIn("传送页还开着", calls[0][1])
+        self.assertEqual(("close", (MapPageMode.DIRECT_TELEPORT,)), calls[1])
+        self.assertEqual([("minimap",), ("hand",)], calls[2:])
+
+    def test_restart_from_the_field_closes_nothing(self):
+        calls = []
+        card, navigator = self._restart_navigator(MapPageMode.UNKNOWN, calls)
+
+        result = navigator.prepare_collection_main_area(card.card_id, via_hunting_ground=True)
+
+        self.assertTrue(result.success, result.message)
+        self.assertEqual([("minimap",), ("hand",)], calls)
+
+    def test_first_entry_does_not_look_for_a_teleport_page(self):
+        calls = []
+        card, navigator = self._restart_navigator(MapPageMode.DIRECT_TELEPORT, calls)
+        navigator._prepare_collection_main_area = lambda *_a, **_k: NavigationResult(
+            True, ScreenState.SANDBOX
+        )
+
+        navigator.prepare_collection_main_area(card.card_id)
+
+        self.assertEqual([("minimap",)], calls)
+
     def _circle_page_navigator(self, opens):
         """Hand always read; ``opens`` answers each wait for the 传送页."""
         navigator = Navigator(SimpleNamespace(), SimpleNamespace())

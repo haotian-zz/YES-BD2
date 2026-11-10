@@ -4058,6 +4058,29 @@ class SandboxNavigationMixin:
         if callable(log):
             log(text)
 
+    def _close_leftover_teleport_page(self) -> None:
+        """A teleport page still open hides the HUD every way home needs.
+
+        bd2 会话 2026-11-10 第10章: both presses on 官邸地下 were lost, so
+        移动魔法阵 stayed up through the arrival wait, and the hand, the
+        area map and the ≡ menu all failed under it (also 2026-11-02,
+        卢戈森林深处).  Closed first; a field is left alone.
+        """
+        try:
+            frame = self.vision.capture()
+            mode = self._detect_map_page_mode(frame).mode
+        except (TaskDisabledException, FinishedException):
+            raise
+        except Exception:
+            return
+        if not mode.is_teleport_map:
+            return
+        self._status("导航状态", f"传送页还开着（{mode.value}），先关掉再回主城")
+        self._log_info("跑图：传送页还开着（传送没开始），先关掉再回主城。")
+        closed = self._close_confirmed_map_page({mode}, timeout=8.0)
+        if not closed.success:
+            self._status("导航状态", f"关传送页没成功：{closed.message}")
+
     def _with_npc_trip_failure(self, result: NavigationResult, npc_why: str) -> NavigationResult:
         """A later fallback's failure, with why the NPC trip before it failed:
         that trip is the usual way, so its failure is the cause to read."""
@@ -4077,6 +4100,8 @@ class SandboxNavigationMixin:
         card = CARD_BY_ID.get(card_id)
         if card is None or not card.collectable:
             return NavigationResult(False, ScreenState.UNKNOWN, f"非跑图剧情卡带：{card_id}")
+        if via_hunting_ground:
+            self._close_leftover_teleport_page()
         if not self.ensure_small_minimap():
             return NavigationResult(False, ScreenState.SANDBOX, "小地图放大状态未能切回")
         npc_why = ""
