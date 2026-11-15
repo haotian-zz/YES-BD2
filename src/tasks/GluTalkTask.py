@@ -443,13 +443,8 @@ class GluTalkTask(_ClaimTaskBase):
             text = self._screen_text(screen.SKIP_DIALOG_ROI)
             if keyword_match_count(text, screen.SKIP_DIALOG_WORDS) >= 1:
                 boxes = self._reference_boxes(self.capture_frame(), screen.SKIP_DIALOG_ROI, "跳过对话")
-                confirm = self._box_with(boxes, ("确认",))
-                point = (
-                    (round(confirm.x + confirm.width / 2), round(confirm.y + confirm.height / 2))
-                    if confirm is not None
-                    else (1044, 780)
-                )
-                self.press_and_confirm(
+                point = screen.skip_confirm_point(boxes)
+                skipped = self.press_and_confirm(
                     f"{LABEL}：跳过对话 确认",
                     lambda: self._click_reference(*point, after_sleep=1.0),
                     lambda: keyword_match_count(
@@ -459,6 +454,13 @@ class GluTalkTask(_ClaimTaskBase):
                         self._screen_text(screen.SKIP_DIALOG_ROI), screen.SKIP_DIALOG_WORDS
                     ) >= 1,
                 )
+                if not skipped:
+                    # Evidence for the next look: what the dialog said and where 确认 was.
+                    self.log_info(
+                        f"{LABEL}：跳过对话没确认上，按的是 {point}，对话框读到："
+                        f"{self._boxes_text(boxes)[:80]}"
+                    )
+                    self._save_flow_diagnostic("glu_talk_skip_confirm_failed")
                 return True
             if self._scene_over():
                 return True

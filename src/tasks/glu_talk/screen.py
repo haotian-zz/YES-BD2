@@ -82,11 +82,24 @@ PAID_WORDS = ("钻石", "装饰币", "购买")
 SKIP_POINT = (1638, 60)  # F2
 SKIP_DIALOG_ROI = (660, 250, 600, 600)
 SKIP_DIALOG_WORDS = ("跳过对话",)
+SKIP_CONFIRM_POINT = (1044, 780)  # 「跳过对话」 [确认]
 REWARD_WORDS = ("获得好感度奖励",)
 EFFECT_WORDS = ("获得好感度特效", "主界面设置")
 REWARD_TAP_POINT = (960, 900)
 EFFECT_BACK_POINT = (172, 50)
 SCENE_ADVANCE_POINT = (960, 1000)
+
+
+def skip_confirm_point(boxes) -> tuple[int, int]:
+    """Where to press 确认 on 「跳过对话」: a box reading just 确认 (the
+    button), else the calibrated point.  A line of the message that
+    mentions 确认 is not the button (live 2026-11-15: on the last
+    encounters, EP.09 → 10, both presses landed on such a line at
+    (959, 438) and the dialog stayed up)."""
+    for box in boxes:
+        if normalize_ocr_text(getattr(box, "name", "")) == normalize_ocr_text("确认"):
+            return (round(box.x + box.width / 2), round(box.y + box.height / 2))
+    return SKIP_CONFIRM_POINT
 
 
 @dataclass(frozen=True)

@@ -46,6 +46,20 @@ class HeaderTest(unittest.TestCase):
         self.assertFalse(screen.dialog_is_free("是否要进行相遇事件?"))
 
 
+class SkipConfirmTest(unittest.TestCase):
+    def test_button_reading_just_confirm(self):
+        boxes = [box("跳过对话", 960, 400), box("取消", 876, 780, 80), box("确认", 1046, 782, 80)]
+        self.assertEqual(screen.skip_confirm_point(boxes), (1046, 782))
+
+    def test_message_line_with_confirm_is_not_the_button(self):
+        # 2026-11-15: the last encounter's dialog had 确认 in its message.
+        boxes = [box("跳过对话", 960, 400), box("是否确认跳过对话？", 959, 438, 300)]
+        self.assertEqual(screen.skip_confirm_point(boxes), screen.SKIP_CONFIRM_POINT)
+
+    def test_no_boxes_uses_the_calibrated_point(self):
+        self.assertEqual(screen.skip_confirm_point([]), (1044, 780))
+
+
 class HeartTest(unittest.TestCase):
     def test_hearts_found_on_the_chat_tab(self):
         hearts = screen.find_hearts(frame_with("list_chats_tab.png"))
