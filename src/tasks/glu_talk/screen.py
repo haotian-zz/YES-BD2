@@ -93,9 +93,9 @@ SCENE_ADVANCE_POINT = (960, 1000)
 def skip_confirm_point(boxes) -> tuple[int, int]:
     """Where to press 确认 on 「跳过对话」: a box reading just 确认 (the
     button), else the calibrated point.  A line of the message that
-    mentions 确认 is not the button (live 2026-11-15: on the last
-    encounters, EP.09 → 10, both presses landed on such a line at
-    (959, 438) and the dialog stayed up)."""
+    mentions 确认 is not the button (live 2026-11-15: for 格兰希特 and
+    阿奇拉 both presses landed on such a line at (959, 438) and the
+    dialog stayed up; 泰瑞丝 the same day got the calibrated point)."""
     for box in boxes:
         if normalize_ocr_text(getattr(box, "name", "")) == normalize_ocr_text("确认"):
             return (round(box.x + box.width / 2), round(box.y + box.height / 2))

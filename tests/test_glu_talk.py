@@ -52,7 +52,7 @@ class SkipConfirmTest(unittest.TestCase):
         self.assertEqual(screen.skip_confirm_point(boxes), (1046, 782))
 
     def test_message_line_with_confirm_is_not_the_button(self):
-        # 2026-11-15: the last encounter's dialog had 确认 in its message.
+        # 2026-11-15 格兰希特、阿奇拉: a line with 确认 at (959, 438) was pressed.
         boxes = [box("跳过对话", 960, 400), box("是否确认跳过对话？", 959, 438, 300)]
         self.assertEqual(screen.skip_confirm_point(boxes), screen.SKIP_CONFIRM_POINT)
 
