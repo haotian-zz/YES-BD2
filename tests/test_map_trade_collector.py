@@ -3232,8 +3232,20 @@ class CollectionRouteTest(unittest.TestCase):
     """User 2026-09-28: on the last map go backwards, otherwise start from
     the town; a failed move restarts via the hunting ground."""
 
-    def _run(self, here, *, fail_first_advance=False, card_id="Q_sp6", fail_message="走不过去"):
+    def _run(
+        self,
+        here,
+        *,
+        fail_first_advance=False,
+        card_id="Q_sp6",
+        fail_message="走不过去",
+        extra_card_id=None,
+        selected=None,
+        outcome=None,
+    ):
         card = CARD_BY_ID[card_id]
+        cards = (card,) if extra_card_id is None else (card, CARD_BY_ID[extra_card_id])
+        selected = [] if selected is None else selected
         events = []
         with tempfile.TemporaryDirectory() as temp_dir:
             progress = ProgressStore(
@@ -3256,7 +3268,8 @@ class CollectionRouteTest(unittest.TestCase):
                 return NavigationResult(True, ScreenState.SANDBOX)
 
             navigator = SimpleNamespace(
-                select_collection_card=lambda card_id, **_k: CollectionCardSelectionResult(
+                select_collection_card=lambda card_id, **_k: selected.append(card_id)
+                or CollectionCardSelectionResult(
                     CollectionCardSelectionOutcome.ENTERED,
                     NavigationResult(True, ScreenState.SANDBOX),
                 ),
@@ -3284,8 +3297,10 @@ class CollectionRouteTest(unittest.TestCase):
                 return SkillExecutionResult(True)
 
             collector._use_actions = use_actions
-            with patch("src.tasks.map_trade.collector.COLLECTABLE_CARDS", (card,)):
-                collector.run()
+            with patch("src.tasks.map_trade.collector.COLLECTABLE_CARDS", cards):
+                result = collector.run()
+        if outcome is not None:
+            outcome.append(result)
         return events
 
     def test_on_the_last_map_the_route_goes_backwards(self):
@@ -3350,3 +3365,23 @@ class CollectionRouteTest(unittest.TestCase):
         )
         # No restart, and no second pass either.
         self.assertEqual([("collect", "main_area"), ("go", "main_area", "battle_area_1")], events)
+
+    def test_a_full_consumables_bag_stops_the_run(self):
+        # bd2 session 2026-11-18: 「消耗品背包需有空位」 on the way to each
+        # battle area; 第8、9、10章 were skipped one after another.
+        from src.tasks.map_trade.navigator_constants import CONSUMABLE_BAG_FULL_MESSAGE
+
+        selected, outcome = [], []
+        events = self._run(
+            "main_area",
+            fail_first_advance=True,
+            fail_message=f"传送到贫民区后未确认剧情箱庭：{CONSUMABLE_BAG_FULL_MESSAGE}",
+            extra_card_id="Q_sp7",
+            selected=selected,
+            outcome=outcome,
+        )
+        # No restart via the hunting ground (a battle area too), no next card.
+        self.assertEqual([("collect", "main_area"), ("go", "main_area", "battle_area_1")], events)
+        self.assertEqual(["Q_sp6"], selected)
+        self.assertFalse(outcome[0].success)
+        self.assertIn(CONSUMABLE_BAG_FULL_MESSAGE, outcome[0].message)

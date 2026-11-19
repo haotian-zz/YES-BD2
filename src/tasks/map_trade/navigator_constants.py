@@ -1259,3 +1259,9 @@ TALK_SKIP_CONFIRM_REGION = (0.3, 0.3, 0.7, 0.85)
 FIRST_CARD_DIALOG_REGION = (240, 120, 800, 541)
 FIRST_CARD_PAID_WORDS = ("购买", "钻石", "鸡尾酒", "消耗", "使用", "付费")
 FIRST_CARD_PAID_DIALOG_MESSAGE = "进入卡带时出现可能花费资源的确认框，没有按确认"
+# 「无法移动 / 消耗品背包需有空位，才能前往战斗区域。」 with a lone 确认 that
+# only closes it (bd2 session 2026-11-18, 第8～10章 主城 -> 战斗区域): its
+# 消耗品 is no cost.  Every battle area waits on the same full bag, so the
+# run stops instead of skipping card after card.
+CONSUMABLE_BAG_FULL_WORDS = ("无法移动", "消耗品背包")
+CONSUMABLE_BAG_FULL_MESSAGE = "消耗品背包满了，进不了战斗区域"

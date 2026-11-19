@@ -53,6 +53,7 @@ from src.tasks.map_trade.navigator import (
     StoryBadgeDetection,
 )
 from src.tasks.map_trade.navigator_constants import (
+    CONSUMABLE_BAG_FULL_MESSAGE,
     FIRST_CARD_DIALOG_REGION,
     FIRST_CARD_PAID_DIALOG_MESSAGE,
 )
@@ -844,6 +845,52 @@ class CollectionCardTest(unittest.TestCase):
         navigator = Navigator(SimpleNamespace(config={}), vision)
         self.assertFalse(navigator._handle_story_card_intermediate(frame))
         self.assertEqual([], clicks)
+
+    def _bag_full_navigator(self, frame, clicks, saved, warnings, special_pages):
+        vision = self._first_card_vision(
+            frame, ["确认"], "无法移动 消耗品背包需有空位，才能前往战斗区域。 确认", clicks
+        )
+        task = SimpleNamespace(
+            config={"加载页面等待秒数": 45.0},
+            sleep=lambda *_args: None,
+            save_frame=lambda name, image: saved.append((name, image)) or Path(f"{name}.png"),
+            log_warning=warnings.append,
+            _handle_recent_cartridge_special_pages=lambda **kwargs: (
+                special_pages.append(kwargs) or CartridgeSpecialPageResult.HANDLED
+            ),
+        )
+        return Navigator(task, vision)
+
+    def test_full_bag_notice_is_closed_and_stops_the_move(self):
+        # bd2 session 2026-11-18, 第8章 罗戴夫镇 -> 贫民区: 「无法移动 / 消耗品背包
+        # 需有空位」 has one 确认 that only closes it; 消耗品 is not a cost.
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        clicks, saved, warnings, special_pages = [], [], [], []
+        navigator = self._bag_full_navigator(frame, clicks, saved, warnings, special_pages)
+
+        result = navigator._handle_story_card_intermediate(frame)
+
+        self.assertFalse(result.success)
+        self.assertEqual(CONSUMABLE_BAG_FULL_MESSAGE, result.message)
+        self.assertEqual([((960, 820), frame.shape, 0.8)], clicks)
+        self.assertEqual([("map_bag_full_dialog", frame)], saved)
+        self.assertTrue(any("map_bag_full_dialog.png" in w for w in warnings))
+        self.assertFalse(any(FIRST_CARD_PAID_DIALOG_MESSAGE in w for w in warnings))
+
+    def test_full_bag_notice_ends_the_wait_without_a_second_try(self):
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        clicks, saved, warnings, special_pages = [], [], [], []
+        navigator = self._bag_full_navigator(frame, clicks, saved, warnings, special_pages)
+        navigator.classify = lambda _frame=None: ScreenState.UNKNOWN
+        navigator._black_frame = lambda _frame: False
+        navigator._auto_moving = lambda _frame: False
+
+        result = navigator._wait_for_story_sandbox(8, timeout=30.0, interval=0.0)
+
+        self.assertFalse(result.success)
+        self.assertEqual(CONSUMABLE_BAG_FULL_MESSAGE, result.message)
+        self.assertEqual(1, len(clicks))
+        self.assertEqual([], special_pages)
 
     def test_first_card_wait_never_confirms_a_dialog_that_may_spend(self):
         # Review #11: any box containing 确认 used to be pressed while

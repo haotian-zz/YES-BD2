@@ -33,6 +33,7 @@ from src.tasks.map_trade.models import (
     CollectionResult,
 )
 from src.tasks.map_trade.navigator import Navigator
+from src.tasks.map_trade.navigator_constants import CONSUMABLE_BAG_FULL_MESSAGE
 from src.tasks.map_trade.progress import ProgressStore
 from src.tasks.map_trade.skill_group_keeper import SkillGroupKeeper, stopping
 from src.tasks.map_trade.skill_layout import SkillLayoutWrong
@@ -317,6 +318,8 @@ class Collector(SkillExecutionMixin):
                 role = CollectionMapRole(target.key)
                 arrived = self._go_to_collection_target(card, current, target)
                 if arrived is not None and not arrived.success:
+                    if CONSUMABLE_BAG_FULL_MESSAGE in arrived.message:
+                        return self._bag_full_stop(card, target, completed_this_run)
                     # Never activated: the same page waits after a restart.
                     if restarted or NO_ACTIVE_TELEPORT_NOTE in arrived.message:
                         stopped = self._skip_card(
@@ -916,6 +919,17 @@ class Collector(SkillExecutionMixin):
             success=result.success and not failed,
             message=f"{note}；{result.message}" if result.message else note,
         )
+
+    def _bag_full_stop(self, card, target, completed_this_run: int) -> CollectionResult:
+        """Every battle area waits on the same full bag (bd2 session
+        2026-11-18: 第8、9、10章 each skipped after it); stop and say so."""
+
+        message = (
+            f"{CONSUMABLE_BAG_FULL_MESSAGE}（{card.label}去{target.title}时游戏提示"
+            "「消耗品背包需有空位」），停止跑图；清出消耗品背包空位后再跑"
+        )
+        self.task.log_warning(f"地图采集：{message}")
+        return CollectionResult(False, completed_submaps=completed_this_run, message=message)
 
     def _skill_failure(
         self,

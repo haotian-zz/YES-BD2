@@ -38,6 +38,8 @@ from src.tasks.map_trade.navigator_constants import (
     CHARACTER_BADGE_WINDOW,
     CHARACTER_CATEGORY_HIGHLIGHT_REGION,
     CHARACTER_CATEGORY_POINT,
+    CONSUMABLE_BAG_FULL_MESSAGE,
+    CONSUMABLE_BAG_FULL_WORDS,
     EVENT_CARD_SCAN_SECONDS,
     EVENT_CATEGORY_HIGHLIGHT_REGION,
     EVENT_CATEGORY_POINT,
@@ -2405,6 +2407,8 @@ class StoryCardNavigationMixin:
                 self.vision.ocr_text(frame, "首次卡带对话", roi=FIRST_CARD_DIALOG_REGION)
             )
         )
+        if all(word in dialog for word in CONSUMABLE_BAG_FULL_WORDS):
+            return self._close_bag_full_dialog(frame, boxes, texts)
         paid = [
             word
             for word in FIRST_CARD_PAID_WORDS
@@ -2412,6 +2416,14 @@ class StoryCardNavigationMixin:
         ]
         if paid:
             return self._refuse_story_card_dialog(frame, paid)
+        if self._click_exact_confirm(frame, boxes, texts):  # 不用确认：等箱庭循环下一帧再看
+            self._status("导航状态", "确认首次卡带对话")
+            return True
+        return False
+
+    def _click_exact_confirm(self, frame: np.ndarray, boxes, texts: list[str]) -> bool:
+        """Press the OCR box that reads exactly 确认."""
+
         for box, text in zip(boxes, texts):
             attrs = tuple(getattr(box, key, None) for key in ("x", "y", "width", "height"))
             if text != "确认" or any(value is None for value in attrs):
@@ -2420,9 +2432,26 @@ class StoryCardNavigationMixin:
             self.vision.click_client(
                 (round(x + width / 2), round(y + height / 2)), frame.shape, after_sleep=0.8
             )
-            self._status("导航状态", "确认首次卡带对话")
             return True
         return False
+
+    def _close_bag_full_dialog(
+        self, frame: np.ndarray, boxes, texts: list[str]
+    ) -> NavigationResult:
+        """「无法移动：消耗品背包需有空位」: close it and stop the move."""
+
+        evidence = "-"
+        try:
+            evidence = self.task.save_frame("map_bag_full_dialog", frame).name
+        except (OSError, ValueError) as exc:
+            self.task.log_warning(f"诊断截图保存失败：{exc}")
+        closed = self._click_exact_confirm(frame, boxes, texts)  # 不用确认：只是关提示，跑图随后停
+        self.task.log_warning(
+            f"{CONSUMABLE_BAG_FULL_MESSAGE}：游戏提示「消耗品背包需有空位，才能前往战斗区域」，"
+            f"{'已按确认关掉提示' if closed else '没找到确认按钮'}（截图 {evidence}）。"
+        )
+        self._status("导航状态", CONSUMABLE_BAG_FULL_MESSAGE)
+        return NavigationResult(False, ScreenState.UNKNOWN, CONSUMABLE_BAG_FULL_MESSAGE)
 
     def _refuse_story_card_dialog(self, frame: np.ndarray, words: list[str]) -> NavigationResult:
         """Leave a dialog that may spend something untouched and stop."""

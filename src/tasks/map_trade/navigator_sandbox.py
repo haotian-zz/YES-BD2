@@ -65,6 +65,7 @@ from src.tasks.map_trade.navigator_constants import (
     BATTLE_RESULT_LEAVE_TEXT,
     EXIT_PICKER_BATTLE,
     EXIT_PICKER_SAFE,
+    CONSUMABLE_BAG_FULL_MESSAGE,
     FIRST_CARD_PAID_DIALOG_MESSAGE,
     AREA_MAP_TELEPORT_BRIGHT_MAXIMUM_SPREAD,
     AREA_MAP_TELEPORT_BRIGHT_MINIMUM_GRAY,
@@ -1082,8 +1083,13 @@ class SandboxNavigationMixin:
             )
             if result.success:
                 dismiss_once_per_run(self)
-            # A dialog that may spend something stops here, not retried.
-            if result.success or attempt or result.message == FIRST_CARD_PAID_DIALOG_MESSAGE:
+            # A dialog that may spend something stops here, not retried; so
+            # does a full consumables bag (the next try meets it again).
+            if (
+                result.success
+                or attempt
+                or result.message in (FIRST_CARD_PAID_DIALOG_MESSAGE, CONSUMABLE_BAG_FULL_MESSAGE)
+            ):
                 return result
             remaining = min(wait_seconds, max(0.0, deadline - monotonic()))
             if remaining <= 0.0:
