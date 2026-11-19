@@ -3,6 +3,7 @@ import threading
 import time
 from typing import Callable
 
+import pywintypes
 import win32api
 import win32con
 import win32gui
@@ -25,6 +26,40 @@ CLONE_AFTER_UP_SECONDS = 0.06
 DESKTOP_DOWN_SECONDS = 0.05
 # Added to the 25 ms wait in _restore_cursor: 50 ms on target after release.
 DESKTOP_AFTER_UP_SECONDS = 0.025
+
+
+# SetCursorPos fails (pywintypes.error, code 0) while the input desktop is not
+# this one.  On win4090 the bd2 session, logged on two minutes after a reboot
+# (2026-11-18), failed one click and the cursor restore right after it; a probe
+# two minutes later moved the cursor fine.  The failed click had ended the whole
+# daily run, so a move now waits up to half a minute for the desktop.
+SET_CURSOR_RETRY_SECONDS = 30.0
+SET_CURSOR_RETRY_INTERVAL = 1.0
+
+
+def _set_cursor(pos):
+    """SetCursorPos, retried for SET_CURSOR_RETRY_SECONDS before it raises."""
+    deadline = time.monotonic() + SET_CURSOR_RETRY_SECONDS
+    tries = 0
+    while True:
+        try:
+            SetCursorPos(pos)
+        except pywintypes.error as exc:
+            # Only the call's own failure: a stop raised while it runs
+            # still ends the step at once (tests/test_mouse_up_always.py).
+            tries += 1
+            if time.monotonic() >= deadline:
+                raise
+            if tries == 1:
+                logger.warning(
+                    "移动鼠标失败，输入桌面可能暂时不是这个会话的桌面，"
+                    f"{SET_CURSOR_RETRY_SECONDS:g} 秒内重试：{exc!r}"
+                )
+            time.sleep(SET_CURSOR_RETRY_INTERVAL)
+            continue
+        if tries:
+            logger.info(f"移动鼠标重试 {tries} 次后成功。")
+        return
 
 
 def _in_clone() -> bool:
@@ -82,7 +117,7 @@ class BD2Interaction(PostMessageInteraction):
             held = None  # where the button went down and is not up yet
             try:
                 self.post(win32con.WM_MOUSEMOVE, 0, win32api.MAKELONG(x1, y1))
-                SetCursorPos(self.capture.get_abs_cords(x1, y1))
+                _set_cursor(self.capture.get_abs_cords(x1, y1))
                 time.sleep(0.03)
                 self.post(win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, win32api.MAKELONG(x1, y1))
                 held = (x1, y1)
@@ -90,7 +125,7 @@ class BD2Interaction(PostMessageInteraction):
                 for index in range(1, steps + 1):
                     x = round(x1 + (x2 - x1) * index / steps)
                     y = round(y1 + (y2 - y1) * index / steps)
-                    SetCursorPos(self.capture.get_abs_cords(x, y))
+                    _set_cursor(self.capture.get_abs_cords(x, y))
                     self.post(win32con.WM_MOUSEMOVE, win32con.MK_LBUTTON, win32api.MAKELONG(x, y))
                     held = (x, y)
                     time.sleep(duration / steps)
@@ -148,7 +183,7 @@ class BD2Interaction(PostMessageInteraction):
                 if should_restore:
                     self.cursor_position = GetCursorPos()
                 abs_x, abs_y = self.capture.get_abs_cords(x, y)
-                SetCursorPos((abs_x, abs_y))
+                _set_cursor((abs_x, abs_y))
                 time.sleep(0.025)
 
             click_pos = win32api.MAKELONG(x, y)
