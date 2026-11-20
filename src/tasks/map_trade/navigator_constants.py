@@ -1265,3 +1265,5 @@ FIRST_CARD_PAID_DIALOG_MESSAGE = "进入卡带时出现可能花费资源的确�
 # run stops instead of skipping card after card.
 CONSUMABLE_BAG_FULL_WORDS = ("无法移动", "消耗品背包")
 CONSUMABLE_BAG_FULL_MESSAGE = "消耗品背包满了，进不了战斗区域"
+# The notice closes at once on a press that lands; a lost one is pressed again.
+BAG_FULL_CLOSE_SECONDS = 2.0

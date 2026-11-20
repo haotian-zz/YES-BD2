@@ -38,6 +38,7 @@ from src.tasks.map_trade.navigator_constants import (
     CHARACTER_BADGE_WINDOW,
     CHARACTER_CATEGORY_HIGHLIGHT_REGION,
     CHARACTER_CATEGORY_POINT,
+    BAG_FULL_CLOSE_SECONDS,
     CONSUMABLE_BAG_FULL_MESSAGE,
     CONSUMABLE_BAG_FULL_WORDS,
     EVENT_CARD_SCAN_SECONDS,
@@ -2421,19 +2422,38 @@ class StoryCardNavigationMixin:
             return True
         return False
 
-    def _click_exact_confirm(self, frame: np.ndarray, boxes, texts: list[str]) -> bool:
-        """Press the OCR box that reads exactly 确认."""
+    @staticmethod
+    def _exact_confirm_point(boxes, texts: list[str]) -> tuple[int, int] | None:
+        """Centre of the OCR box that reads exactly 确认."""
 
         for box, text in zip(boxes, texts):
             attrs = tuple(getattr(box, key, None) for key in ("x", "y", "width", "height"))
             if text != "确认" or any(value is None for value in attrs):
                 continue
             x, y, width, height = (float(value) for value in attrs)
-            self.vision.click_client(
-                (round(x + width / 2), round(y + height / 2)), frame.shape, after_sleep=0.8
+            return round(x + width / 2), round(y + height / 2)
+        return None
+
+    def _click_exact_confirm(self, frame: np.ndarray, boxes, texts: list[str]) -> bool:
+        """Press the OCR box that reads exactly 确认."""
+
+        point = self._exact_confirm_point(boxes, texts)
+        if point is None:
+            return False
+        self.vision.click_client(point, frame.shape, after_sleep=0.8)
+        return True
+
+    def _bag_full_dialog_shown(self) -> bool:
+        """「无法移动：消耗品背包需有空位」 is on a fresh frame."""
+
+        dialog = normalize_text(
+            self.vision.simplify(
+                self.vision.ocr_text(
+                    self.vision.capture(), "首次卡带对话", roi=FIRST_CARD_DIALOG_REGION
+                )
             )
-            return True
-        return False
+        )
+        return all(word in dialog for word in CONSUMABLE_BAG_FULL_WORDS)
 
     def _close_bag_full_dialog(
         self, frame: np.ndarray, boxes, texts: list[str]
@@ -2445,10 +2465,30 @@ class StoryCardNavigationMixin:
             evidence = self.task.save_frame("map_bag_full_dialog", frame).name
         except (OSError, ValueError) as exc:
             self.task.log_warning(f"诊断截图保存失败：{exc}")
-        closed = self._click_exact_confirm(frame, boxes, texts)  # 不用确认：只是关提示，跑图随后停
+        # bd2 session 2026-11-19: the 确认 pressed 0.5 s after the notice came
+        # up was lost and the notice stayed, so the way home could not read the
+        # page.  Only a notice is closed here: pressed again while it is shown.
+        point = self._exact_confirm_point(boxes, texts)
+        if point is None:
+            outcome = "没找到确认按钮"
+        else:
+            pressed = press_and_confirm(
+                "消耗品背包满提示的确认",
+                lambda: self.vision.click_client(point, frame.shape, after_sleep=0.8),
+                lambda: not self._bag_full_dialog_shown(),
+                still_before=self._bag_full_dialog_shown,
+                sleep=self.task.sleep,
+                log=self.task.log_info,
+                timeout=BAG_FULL_CLOSE_SECONDS,
+            )
+            outcome = (
+                "已按确认关掉提示"
+                if pressed
+                else f"按了{pressed.presses}次确认提示还在"
+            )
         self.task.log_warning(
             f"{CONSUMABLE_BAG_FULL_MESSAGE}：游戏提示「消耗品背包需有空位，才能前往战斗区域」，"
-            f"{'已按确认关掉提示' if closed else '没找到确认按钮'}（截图 {evidence}）。"
+            f"{outcome}（截图 {evidence}）。"
         )
         self._status("导航状态", CONSUMABLE_BAG_FULL_MESSAGE)
         return NavigationResult(False, ScreenState.UNKNOWN, CONSUMABLE_BAG_FULL_MESSAGE)

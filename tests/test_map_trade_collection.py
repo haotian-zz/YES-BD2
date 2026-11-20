@@ -846,15 +846,47 @@ class CollectionCardTest(unittest.TestCase):
         self.assertFalse(navigator._handle_story_card_intermediate(frame))
         self.assertEqual([], clicks)
 
-    def _bag_full_navigator(self, frame, clicks, saved, warnings, special_pages):
-        vision = self._first_card_vision(
-            frame, ["确认"], "无法移动 消耗品背包需有空位，才能前往战斗区域。 确认", clicks
+    def _bag_full_navigator(
+        self, frame, clicks, saved, warnings, special_pages, ignored=0, infos=None
+    ):
+        """The bag notice on screen until a press lands; the first `ignored` are lost."""
+
+        dialog = "无法移动 消耗品背包需有空位，才能前往战斗区域。 确认"
+
+        def shown():
+            return len(clicks) <= ignored
+
+        def ocr_text(_frame, name, roi=None):
+            if name == "首次卡带对话":
+                self.assertIs(frame, _frame)
+                self.assertEqual(FIRST_CARD_DIALOG_REGION, roi)
+                return dialog if shown() else ""
+            return ""
+
+        def ocr_boxes(_frame, name, roi=None):
+            self.assertIs(frame, _frame)
+            self.assertEqual(("首次卡带确认", FIRST_CARD_CONFIRM_REGION), (name, roi))
+            if not shown():
+                return []
+            return [SimpleNamespace(name="确认", x=900, y=800, width=120, height=40)]
+
+        vision = SimpleNamespace(
+            capture=lambda: frame,
+            simplify=lambda value: value,
+            ocr_text=ocr_text,
+            ocr_boxes=ocr_boxes,
+            match=lambda _frame, _spec: MatchResult(-1.0, (0, 0), (0, 0)),
+            passes=lambda result, _spec: result.score >= 0.72,
+            click_client=lambda point, shape, after_sleep=0: clicks.append(
+                (point, shape, after_sleep)
+            ),
         )
         task = SimpleNamespace(
             config={"加载页面等待秒数": 45.0},
             sleep=lambda *_args: None,
             save_frame=lambda name, image: saved.append((name, image)) or Path(f"{name}.png"),
             log_warning=warnings.append,
+            log_info=(infos if infos is not None else []).append,
             _handle_recent_cartridge_special_pages=lambda **kwargs: (
                 special_pages.append(kwargs) or CartridgeSpecialPageResult.HANDLED
             ),
@@ -874,8 +906,39 @@ class CollectionCardTest(unittest.TestCase):
         self.assertEqual(CONSUMABLE_BAG_FULL_MESSAGE, result.message)
         self.assertEqual([((960, 820), frame.shape, 0.8)], clicks)
         self.assertEqual([("map_bag_full_dialog", frame)], saved)
+        self.assertTrue(any("已按确认关掉提示" in w for w in warnings))
         self.assertTrue(any("map_bag_full_dialog.png" in w for w in warnings))
         self.assertFalse(any(FIRST_CARD_PAID_DIALOG_MESSAGE in w for w in warnings))
+
+    def test_a_lost_press_on_the_full_bag_notice_is_made_again(self):
+        # bd2 session 2026-11-19: the 确认 pressed 0.5 s after the notice came
+        # up was lost; the notice stayed and the way home could not read the page.
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        clicks, saved, warnings, special_pages, infos = [], [], [], [], []
+        navigator = self._bag_full_navigator(
+            frame, clicks, saved, warnings, special_pages, ignored=1, infos=infos
+        )
+
+        result = navigator._handle_story_card_intermediate(frame)
+
+        self.assertEqual(CONSUMABLE_BAG_FULL_MESSAGE, result.message)
+        self.assertEqual([((960, 820), frame.shape, 0.8)] * 2, clicks)
+        self.assertTrue(any("补按" in line for line in infos))
+        self.assertTrue(any("已按确认关掉提示" in w for w in warnings))
+
+    def test_a_full_bag_notice_that_stays_is_reported_and_still_stops(self):
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        clicks, saved, warnings, special_pages = [], [], [], []
+        navigator = self._bag_full_navigator(
+            frame, clicks, saved, warnings, special_pages, ignored=9
+        )
+
+        result = navigator._handle_story_card_intermediate(frame)
+
+        self.assertFalse(result.success)
+        self.assertEqual(CONSUMABLE_BAG_FULL_MESSAGE, result.message)
+        self.assertEqual(2, len(clicks))
+        self.assertTrue(any("按了2次确认提示还在" in w for w in warnings))
 
     def test_full_bag_notice_ends_the_wait_without_a_second_try(self):
         frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
